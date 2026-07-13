@@ -338,7 +338,17 @@ def del_cat():
     return jsonify({"ok": True})
 
 @app.route("/api/ahorros")
-def ahorros(): return jsonify(q("SELECT * FROM ahorros ORDER BY moneda,descripcion"))
+def ahorros():
+    tasa_cop = float(cfg("tasa_cop_usd") or 4050)
+    tasa_pyg = float(cfg("tasa_pyg_usd") or 7300)
+    rows = q("SELECT * FROM ahorros")
+    def to_usd(r):
+        m, amt = r["moneda"], r["monto"]
+        if m == "COP": return amt / tasa_cop
+        if m == "PYG": return amt / tasa_pyg
+        return amt  # USD, EUR, etc treated as 1:1 for sorting
+    rows.sort(key=to_usd, reverse=True)
+    return jsonify(rows)
 
 @app.route("/api/ahorros/agregar", methods=["POST"])
 def add_ahorro():
@@ -1460,8 +1470,8 @@ async function loadAhorros(){
     const disp=adjustedMonto(a);
     return `<div class="ahorro-item" id="ah-${a.id}">
       <div>
-        <div class="ahorro-lbl">${a.descripcion}</div>
-        ${a.cuenta&&a.cuenta!==a.descripcion?`<div style="font-size:11px;color:var(--text3)">${a.cuenta}</div>`:''}
+        <div class="ahorro-lbl">${a.cuenta&&a.cuenta!==a.descripcion?a.cuenta:a.descripcion}</div>
+        ${a.cuenta&&a.cuenta!==a.descripcion?`<div style="font-size:11px;color:var(--text3)">${a.descripcion}</div>`:''}
       </div>
       <div style="display:flex;align-items:center;gap:6px">
         <div class="ahorro-val">${a.moneda==='COP'?fmtCOP(disp)+' COP':fmt(disp)}</div>
