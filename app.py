@@ -53,6 +53,7 @@ def cfg(k): r = q("SELECT valor FROM config WHERE clave=?", (k,)); return r[0]["
 @app.route("/api/networth")
 def networth():
     tasa = float(cfg("tasa_cop_usd") or 4050)
+    tasa_pyg = float(cfg("tasa_pyg_usd") or 7300)
     precios = {x["activo"]: x["precio_usd"] for x in q("SELECT * FROM precios_mercado")}
 
     tablas = ["inversiones_personal", "inversiones_family", "inversiones_papas"]
@@ -189,6 +190,63 @@ def upd_precio():
     ex("INSERT INTO precios_mercado(activo,precio_usd,actualizado_en) VALUES(?,?,?) ON CONFLICT(activo) DO UPDATE SET precio_usd=excluded.precio_usd,actualizado_en=excluded.actualizado_en",
        (d["activo"].upper(), float(d["precio_usd"]), date.today().isoformat()))
     return jsonify({"ok": True})
+
+@app.route("/api/precios/live", methods=["GET"])
+def precios_live():
+    import urllib.request, json as _json, time
+    now = date.today().isoformat()
+    result = {}
+    errors = []
+
+    def fetch(url, headers={}):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", **headers})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                return _json.loads(r.read())
+        except Exception as e:
+            return None
+
+    # BTC price (CoinGecko)
+    cg = fetch("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,MicroStrategy&vs_currencies=usd")
+    if cg and "bitcoin" in cg:
+        btc = float(cg["bitcoin"]["usd"])
+        result["BTC"] = btc
+        ex("INSERT INTO precios_mercado(activo,precio_usd,actualizado_en) VALUES(?,?,?) ON CONFLICT(activo) DO UPDATE SET precio_usd=excluded.precio_usd,actualizado_en=excluded.actualizado_en",
+           ("BTC", btc, now))
+    else:
+        errors.append("BTC")
+
+    # MSTR price (Yahoo Finance)
+    yf = fetch("https://query1.finance.yahoo.com/v8/finance/chart/MSTR?interval=1d&range=1d")
+    if yf:
+        try:
+            mstr = float(yf["chart"]["result"][0]["meta"]["regularMarketPrice"])
+            result["MSTR"] = mstr
+            ex("INSERT INTO precios_mercado(activo,precio_usd,actualizado_en) VALUES(?,?,?) ON CONFLICT(activo) DO UPDATE SET precio_usd=excluded.precio_usd,actualizado_en=excluded.actualizado_en",
+               ("MSTR", mstr, now))
+        except:
+            errors.append("MSTR")
+    else:
+        errors.append("MSTR")
+
+    # USD/COP and USD/PYG (exchangerate-api free tier)
+    fx = fetch("https://open.er-api.com/v6/latest/USD")
+    if fx and fx.get("result") == "success":
+        rates = fx["rates"]
+        if "COP" in rates:
+            cop = float(rates["COP"])
+            result["USD_COP"] = cop
+            ex("INSERT INTO config(clave,valor) VALUES(?,?) ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor",
+               ("tasa_cop_usd", str(cop)))
+        if "PYG" in rates:
+            pyg = float(rates["PYG"])
+            result["USD_PYG"] = pyg
+            ex("INSERT INTO config(clave,valor) VALUES(?,?) ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor",
+               ("tasa_pyg_usd", str(pyg)))
+    else:
+        errors.append("FX")
+
+    return jsonify({"ok": True, "precios": result, "errors": errors, "actualizado": now})
 
 
 @app.route("/api/budget/mes")
@@ -668,14 +726,6 @@ tr:hover td{background:var(--bg)}
 </head>
 <body>
 
-<!-- ── ONBOARDING ── -->
-<div class="modal-bg" id="onboarding" style="display:none">
-  <div class="modal">
-    <div class="steps" id="ob-steps"></div>
-    <div id="ob-content"></div>
-  </div>
-</div>
-
 <!-- ── HEADER ── -->
 <div class="header">
   <div class="header-brand">
@@ -834,21 +884,19 @@ tr:hover td{background:var(--bg)}
 
 <!-- ── AJUSTES ── -->
 <div class="tab" id="tab-config">
-  <div class="section-title">Precios de mercado</div>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+    <div class="section-title" style="margin:0">Precios de mercado</div>
+    <button class="btn btn-primary" onclick="refreshLive()" id="btn-refresh">↻ Actualizar precios</button>
+  </div>
+  <div id="live-prices-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:24px"></div>
+  <div class="section-title">Otros activos</div>
   <div class="form-card" style="margin-top:0">
-    <div class="form-title">Actualiza el precio actual de tus activos para ver las ganancias reales</div>
+    <div class="form-title">Agrega o actualiza precio manual de cualquier activo</div>
     <div id="precios-list"></div>
     <div class="form-row" style="margin-top:12px">
-      <div class="f-group"><label>Activo</label><input id="p-activo" placeholder="MSTR" style="text-transform:uppercase"></div>
+      <div class="f-group"><label>Activo</label><input id="p-activo" placeholder="ETH" style="text-transform:uppercase"></div>
       <div class="f-group"><label>Precio USD</label><input id="p-precio" type="text" inputmode="decimal" data-money placeholder="100,000"></div>
-      <button class="btn btn-primary" onclick="updPrecio()">Actualizar</button>
-    </div>
-  </div>
-  <div class="section-title">Configuración</div>
-  <div class="form-card" style="margin-top:0">
-    <div class="form-row">
-      <div class="f-group"><label>Tasa COP / USD</label><input id="cfg-tasa" type="text" inputmode="decimal" data-money placeholder="4,050"></div>
-      <button class="btn btn-primary" onclick="updConfig()">Guardar</button>
+      <button class="btn btn-primary" onclick="updPrecio()">Guardar</button>
     </div>
   </div>
 </div>
@@ -895,85 +943,6 @@ function goto(name,btn){
 }
 
 // ── ONBOARDING ────────────────────────────────────────────────────────────────
-const OB_STEPS = [
-  {
-    title:'👋 Bienvenido a tu CFO',
-    desc:'Vamos a configurar todo en 3 pasos. Primero, ¿cuál es el precio actual de tus activos?',
-    render:()=>`
-      <div class="f-group"><label>Precio actual BTC (USD)</label>
-        <input id="ob-btc" type="text" inputmode="decimal" data-money placeholder="1,000,000" value="1,000,000"></div>
-      <div class="f-group"><label>¿Tenés MSTR u otros activos? (opcional)</label>
-        <input id="ob-otros" placeholder="MSTR:400, ETH:2500 (activo:precio)"></div>`
-  },
-  {
-    title:'💰 Tu budget mensual',
-    desc:'¿Cuánto ganás al mes y cuáles son tus principales categorías de gasto?',
-    render:()=>`
-      <div class="f-group"><label>Ingreso mensual (USD)</label>
-        <input id="ob-ingreso" type="text" inputmode="decimal" data-money placeholder="5,000"></div>
-      <div class="f-group"><label>Tasa COP → USD</label>
-        <input id="ob-tasa" type="text" inputmode="decimal" data-money placeholder="4,050" value="4,050"></div>`
-  },
-  {
-    title:'🎯 Primera meta',
-    desc:'¿Qué es lo próximo que querés ahorrar o lograr? (podés agregar más después)',
-    render:()=>`
-      <div class="f-group"><label>¿Cuál es tu meta? (opcional)</label>
-        <input id="ob-meta-nombre" placeholder="Ej: Viaje a Japón"></div>
-      <div class="f-group"><label>¿Cuánto necesitás? (USD)</label>
-        <input id="ob-meta-monto" type="text" inputmode="decimal" data-money placeholder="2,000"></div>
-      <div class="f-group"><label>¿Para cuándo?</label>
-        <input id="ob-meta-fecha" type="date"></div>`
-  }
-];
-
-let obStep = 0;
-async function runOnboarding(){
-  if(localStorage.getItem('cfo_setup')==='done') return;
-  $('onboarding').style.display='flex';
-  renderObStep();
-}
-function renderObStep(){
-  const s=OB_STEPS[obStep];
-  const steps = OB_STEPS.map((_,i)=>`<div class="step${i<=obStep?' done':''}"></div>`).join('');
-  $('ob-steps').innerHTML=steps;
-  $('ob-content').innerHTML=`
-    <h2>${s.title}</h2><p>${s.desc}</p>
-    ${s.render()}
-    <div style="display:flex;gap:8px;margin-top:20px">
-      ${obStep>0?'<button class="btn btn-outline btn-sm" onclick="obBack()">← Atrás</button>':''}
-      <button class="btn btn-primary" style="flex:1;padding:12px;border-radius:12px;font-size:15px"
-        onclick="obNext()">${obStep===OB_STEPS.length-1?'¡Listo! →':'Siguiente →'}</button>
-    </div>`;
-}
-function obBack(){obStep--;renderObStep();}
-async function obNext(){
-  const api = (url,d)=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});
-  if(obStep===0){
-    const btc=$('ob-btc')?.value;
-    if(btc) await api('/api/precios/actualizar',{activo:'BTC',precio_usd:parseMoney(btc)});
-    const otros=$('ob-otros')?.value||'';
-    for(const x of otros.split(',').map(s=>s.trim()).filter(Boolean)){
-      const [a,p]=x.split(':');
-      if(a&&p) await api('/api/precios/actualizar',{activo:a.trim().toUpperCase(),precio_usd:parseMoney(p)});
-    }
-  } else if(obStep===1){
-    const ingreso=$('ob-ingreso')?.value;
-    const tasa=$('ob-tasa')?.value||'4050';
-    await api('/api/config/actualizar',{tasa_cop_usd:parseMoney(tasa)});
-    if(ingreso) await api('/api/categorias/agregar',{nombre:'Salario / ingresos',limite_mensual:parseMoney(ingreso),tipo:'ingreso'});
-  } else if(obStep===2){
-    const nom=$('ob-meta-nombre')?.value;
-    const monto=$('ob-meta-monto')?.value;
-    const fecha=$('ob-meta-fecha')?.value;
-    if(nom&&monto) await api('/api/metas/agregar',{nombre:nom,monto_objetivo:parseMoney(monto),fecha_objetivo:fecha||null,monto_actual:0});
-    localStorage.setItem('cfo_setup','done');
-    $('onboarding').style.display='none';
-    loadHome();
-    return;
-  }
-  obStep++;renderObStep();
-}
 
 // ── HOME ──────────────────────────────────────────────────────────────────────
 const charts = {};
@@ -1807,25 +1776,63 @@ document.addEventListener('change',e=>{
 });
 
 // ── CONFIG ────────────────────────────────────────────────────────────────────
+const LIVE_CARDS = [
+  {key:'BTC',    label:'Bitcoin',   sym:'₿',  color:'#f59e0b', fmt: v=>'$'+Number(v).toLocaleString('en-US',{maximumFractionDigits:0})},
+  {key:'MSTR',   label:'MicroStrategy', sym:'📈', color:'#6366f1', fmt: v=>'$'+Number(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})},
+  {key:'COP',    label:'USD → COP', sym:'🇨🇴', color:'#10b981', fmt: v=>Number(v).toLocaleString('es-CO',{maximumFractionDigits:0})+' COP'},
+  {key:'PYG',    label:'USD → PYG', sym:'🇵🇾', color:'#3b82f6', fmt: v=>Number(v).toLocaleString('en-US',{maximumFractionDigits:0})+' ₲'},
+];
+
 async function loadConfig(){
-  const [p,cfg]=await Promise.all([
+  const [precios, cfg] = await Promise.all([
     fetch('/api/precios').then(r=>r.json()),
     fetch('/api/config').then(r=>r.json())
   ]);
-  $('precios-list').innerHTML=p.map(x=>`
+  const pm = Object.fromEntries(precios.map(x=>[x.activo,x]));
+  const copRate = parseFloat(cfg.tasa_cop_usd||0);
+  const pygRate = parseFloat(cfg.tasa_pyg_usd||0);
+
+  const liveData = {
+    BTC:  pm['BTC']  ? {precio:pm['BTC'].precio_usd,   updated:pm['BTC'].actualizado_en}   : null,
+    MSTR: pm['MSTR'] ? {precio:pm['MSTR'].precio_usd,  updated:pm['MSTR'].actualizado_en}  : null,
+    COP:  copRate    ? {precio:copRate, updated: cfg.tasa_cop_usd ? 'en DB' : null}         : null,
+    PYG:  pygRate    ? {precio:pygRate, updated: cfg.tasa_pyg_usd ? 'en DB' : null}         : null,
+  };
+
+  $('live-prices-grid').innerHTML = LIVE_CARDS.map(c=>{
+    const d = liveData[c.key];
+    return `<div style="background:var(--surface);border-radius:14px;padding:18px;box-shadow:var(--shadow);position:relative;overflow:hidden">
+      <div style="position:absolute;top:0;left:0;right:0;height:3px;background:${c.color}"></div>
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:6px">${c.sym} ${c.label}</div>
+      <div style="font-size:22px;font-weight:800;letter-spacing:-.5px;color:var(--text);margin-bottom:4px">${d ? c.fmt(d.precio) : '—'}</div>
+      <div style="font-size:11px;color:var(--text3)">${d ? 'Actualizado: '+d.updated : 'Sin datos — presiona Actualizar'}</div>
+    </div>`;
+  }).join('');
+
+  // Otros activos (excluye los que ya están en live cards)
+  const liveKeys = new Set(['BTC','MSTR']);
+  const otros = precios.filter(x=>!liveKeys.has(x.activo));
+  $('precios-list').innerHTML = otros.map(x=>`
     <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border2)">
       <div>
         <span style="font-weight:700;font-size:15px">${x.activo}</span>
-        <span style="font-size:12px;color:var(--text3);margin-left:8px">Actualizado: ${x.actualizado_en}</span>
+        <span style="font-size:12px;color:var(--text3);margin-left:8px">${x.actualizado_en}</span>
       </div>
       <div style="display:flex;align-items:center;gap:8px">
         <input type="text" inputmode="decimal" data-money value="${fmtInput(x.precio_usd)}" id="p-${x.activo}"
           style="width:130px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px;font-family:inherit;outline:none;color:var(--text)">
         <button class="btn btn-outline btn-sm" onclick="updPrecioById('${x.activo}')">Guardar</button>
       </div>
-    </div>`).join('') || '<p style="color:var(--text3);font-size:13px">Sin precios registrados</p>';
+    </div>`).join('') || '<p style="color:var(--text3);font-size:13px;margin:0">Sin otros activos</p>';
+}
 
-  if(cfg.tasa_cop_usd) $('cfg-tasa').value=fmtInput(cfg.tasa_cop_usd);
+async function refreshLive(){
+  const btn=$('btn-refresh');
+  btn.textContent='Actualizando...'; btn.disabled=true;
+  const r = await fetch('/api/precios/live').then(x=>x.json());
+  btn.textContent='↻ Actualizar precios'; btn.disabled=false;
+  await loadConfig();
+  loadHome();
 }
 
 async function updPrecioById(activo){
@@ -1833,7 +1840,7 @@ async function updPrecioById(activo){
   if(!precio) return;
   await fetch('/api/precios/actualizar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({activo,precio_usd:parseMoney(precio)})});
   loadConfig();
-  if(document.getElementById('tab-home').classList.contains('active')) loadHome();
+  loadHome();
 }
 
 async function updPrecio(){
@@ -1844,17 +1851,9 @@ async function updPrecio(){
   loadConfig();
 }
 
-async function updConfig(){
-  const tasa=$('cfg-tasa').value;
-  if(!tasa) return;
-  await fetch('/api/config/actualizar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasa_cop_usd:parseMoney(tasa)})});
-  loadHome();
-}
-
 // ── Init ──────────────────────────────────────────────────────────────────────
 loadHome();
-loadBudget(); // pre-load cats for quick-add
-runOnboarding();
+loadBudget();
 </script>
 </body>
 </html>"""
