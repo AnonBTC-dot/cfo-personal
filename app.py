@@ -864,6 +864,7 @@ tr:hover td{background:var(--bg)}
             <option value="GrabFi">GrabFi</option>
             <option value="Listo Global">Listo Global</option>
             <option value="Cuenta Paraguay">Cuenta Paraguay</option>
+            <option value="Binance">Binance</option>
             <option value="Efectivo">Efectivo</option>
             <option value="Otro">Otro</option>
           </select></div>
@@ -1657,6 +1658,7 @@ function renderMeta(m){
           <option value="GrabFi">GrabFi</option>
           <option value="Listo Global">Listo Global</option>
           <option value="Cuenta Paraguay">Cuenta Paraguay</option>
+          <option value="Binance">Binance</option>
           <option value="Efectivo">Efectivo</option>
         </select>
         <input id="dep-n-${m.id}" placeholder="Descripción (opcional)"
@@ -1726,6 +1728,7 @@ function editAhorro(id,desc,monto,moneda,cuenta){
         <option value="GrabFi" ${cuenta==='GrabFi'?'selected':''}>GrabFi</option>
         <option value="Listo Global" ${cuenta==='Listo Global'?'selected':''}>Listo Global</option>
         <option value="Cuenta Paraguay" ${cuenta==='Cuenta Paraguay'?'selected':''}>Cuenta Paraguay</option>
+        <option value="Binance" ${cuenta==='Binance'?'selected':''}>Binance</option>
         <option value="Efectivo" ${cuenta==='Efectivo'?'selected':''}>Efectivo</option>
         <option value="Otro" ${cuenta==='Otro'?'selected':''}>Otro</option>
       </select>
