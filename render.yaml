@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: cfo-personal
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: bash start_render.sh
+    disk:
+      name: cfo-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: CFO_DB_PATH
+        value: /data/cfo.db

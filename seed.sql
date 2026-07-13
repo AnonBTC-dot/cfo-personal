@@ -1,0 +1,233 @@
+PRAGMA foreign_keys=OFF;
+BEGIN TRANSACTION;
+CREATE TABLE inversiones_personal (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fecha TEXT NOT NULL,
+    activo TEXT NOT NULL,
+    tipo TEXT NOT NULL,
+    cantidad REAL,
+    precio_unitario REAL,
+    monto_usd REAL NOT NULL,
+    monto_cop REAL,
+    moneda TEXT DEFAULT 'USD',
+    notas TEXT,
+    creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+INSERT INTO inversiones_personal VALUES(52,'2023-11-21','BTC','compra',0.01611293999999999921,36983.0,597.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(53,'2023-12-19','BTC','compra',0.01424175999999999915,42926.0,611.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(54,'2023-12-29','BTC','compra',0.01581238999999999909,42163.0,667.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(55,'2023-12-30','BTC','compra',0.01581737999999999895,42258.0,668.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(56,'2024-01-12','BTC','compra',0.007487520000000000112,42926.0,322.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(57,'2024-01-19','BTC','compra',0.01556756999999999933,41417.0,645.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(58,'2024-01-22','BTC','compra',0.01564841000000000149,41268.0,646.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(59,'2024-01-22','BTC','compra',0.006168329999999999647,40200.0,248.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(60,'2024-01-22','BTC','compra',0.01495833000000000058,40000.0,598.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(61,'2024-01-22','BTC','compra',0.01513833000000000018,39500.0,597.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(62,'2024-01-23','BTC','compra',0.01533833000000000071,39000.0,597.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(63,'2024-01-30','BTC','compra',0.1199396900000000015,43400.0,5209.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(64,'2024-02-12','BTC','compra',0.1560600000000000042,49900.0,7784.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(65,'2024-02-13','BTC','compra',0.1503693200000000007,49650.0,7470.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(66,'2024-02-14','BTC','compra',0.0058639699999999996,51800.0,304.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(67,'2024-03-15','BTC','compra',0.004745049999999999789,68000.0,322.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(68,'2024-03-30','BTC','compra',0.003646250000000000185,70140.0,255.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(69,'2024-04-02','BTC','compra',0.08018000000000000127,65700.0,5263.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(70,'2024-04-03','BTC','compra',0.07323654000000000274,66100.0,4845.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(71,'2024-04-13','BTC','compra',0.003256489999999999906,67300.0,218.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(72,'2024-04-29','BTC','compra',0.007272630000000000413,63800.0,464.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(73,'2024-05-15','BTC','compra',0.007142729999999999913,61700.0,441.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(74,'2024-05-31','BTC','compra',0.03094030000000000044,67000.0,2073.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(75,'2024-06-17','BTC','compra',0.1000000000000000055,65600.0,6690.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(76,'2024-08-16','BTC','compra',0.001699999999999999906,59400.0,99.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(77,'2024-08-24','BTC','compra',0.007848779999999999646,64000.0,502.8600000000000136,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(78,'2024-08-25','BTC','compra',0.007826670000000000849,64150.0,502.8600000000000136,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(79,'2024-08-26','BTC','compra',0.02351523000000000154,64150.0,1508.8599999999999,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(80,'2024-08-28','BTC','compra',0.04277708000000000204,58950.0,2524.09999999999991,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(81,'2024-08-29','BTC','compra',0.01642346000000000083,60900.0,1000.909999999999969,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(82,'2024-08-30','BTC','compra',0.01893094999999999847,58100.0,1099.200000000000045,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(83,'2024-09-01','BTC','compra',0.01896091999999999917,58100.0,1103.200000000000045,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(84,'2024-09-01','BTC','compra',0.00519810999999999971,57350.0,299.1000000000000227,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(85,'2024-09-02','BTC','compra',0.003749999999999999862,58350.0,499.1000000000000227,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(86,'2024-09-03','BTC','compra',0.004810000000000000039,56100.0,299.1000000000000227,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(87,'2024-09-05','BTC','compra',0.007043330000000000423,56500.0,399.1000000000000227,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(88,'2024-09-05','BTC','compra',0.004323330000000000228,56150.0,243.0999999999999944,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(89,'2024-09-06','BTC','compra',0.00924332999999999925,54070.0,499.1000000000000227,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(90,'2024-09-18','BTC','compra',0.008321620000000000058,59600.0,496.8500000000000227,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(91,'2024-09-20','BTC','compra',0.0174899999999999986,62900.0,1096.849999999999909,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(92,'2024-09-27','BTC','compra',0.01678320000000000159,65700.0,1093.400000000000091,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(93,'2024-10-16','BTC','compra',0.07210772000000000014,67400.0,4863.25,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(94,'2024-10-17','BTC','compra',0.02169812999999999951,67000.0,1455.950000000000045,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(95,'2025-04-04','BTC','venta',0.2592007499999999798,81604.0,-21151.81999999999971,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(96,'2025-03-08','BTC','compra',0.02500000000000000138,80000.0,2000.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(97,'2025-03-06','BTC','venta',0.07368879999999999875,103447.0,-7623.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(98,'2025-06-19','BTC','venta',0.01912045999999999885,104600.0,-2000.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(99,'2025-10-21','BTC','compra',0.002629559999999999971,112200.0,295.6299999999999955,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(100,'2025-11-01','BTC','compra',0.000958080000000000042,109900.0,105.4899999999999949,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(101,'2025-11-11','BTC','compra',0.006420330000000000134,106000.0,580.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(102,'2025-11-18','BTC','compra',0.01418156999999999925,93000.0,1323.6099999999999,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_personal VALUES(103,'2023-01-01','BTC','compra',0.0960653499999999939,NULL,2692.0,NULL,'USD','Monto pre-sheet — hardcoded en fórmula original','2026-06-26 16:26:24');
+CREATE TABLE inversiones_family (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fecha TEXT NOT NULL,
+    activo TEXT NOT NULL,
+    tipo TEXT NOT NULL,
+    cantidad REAL,
+    precio_unitario REAL,
+    monto_usd REAL NOT NULL,
+    monto_cop REAL,
+    moneda TEXT DEFAULT 'USD',
+    notas TEXT,
+    creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+INSERT INTO inversiones_family VALUES(11,'2025-10-12','BTC','compra',0.0007991699999999999803,111500.0,89.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_family VALUES(12,'2025-10-17','BTC','compra',0.0008418800000000000371,108960.0,92.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_family VALUES(13,'2025-10-24','BTC','compra',0.0008391299999999999975,110200.0,93.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_family VALUES(14,'2025-11-01','BTC','compra',0.001100000000000000067,109900.0,122.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_family VALUES(15,'2025-11-05','BTC','compra',0.001081410000000000097,104500.0,112.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_family VALUES(16,'2025-11-06','BTC','compra',0.001128869999999999916,101600.0,114.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_family VALUES(17,'2025-11-07','BTC','compra',0.001158839999999999957,100600.0,115.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_family VALUES(18,'2025-11-13','BTC','compra',0.001139999999999999955,100032.0,113.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_family VALUES(19,'2025-12-01','BTC','compra',0.005455080000000000171,88200.0,479.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+INSERT INTO inversiones_family VALUES(20,'2026-01-01','BTC','compra',0.005552500000000000143,88000.0,497.0,NULL,'USD','Lugar: Ahorro','2026-06-26 16:24:13');
+CREATE TABLE inversiones_papas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fecha TEXT NOT NULL,
+    activo TEXT NOT NULL,
+    tipo TEXT NOT NULL,
+    cantidad REAL,
+    precio_unitario REAL,
+    monto_usd REAL NOT NULL,
+    monto_cop REAL,
+    moneda TEXT DEFAULT 'USD',
+    notas TEXT,
+    creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+INSERT INTO inversiones_papas VALUES(15,'2023-12-16','BTC','compra',0.01433291000000000078,42633.0,611.1499999999999773,NULL,'USD',NULL,'2026-06-26 16:24:13');
+INSERT INTO inversiones_papas VALUES(16,'2023-12-17','BTC','compra',0.01444205999999999962,41748.0,608.1699999999999591,NULL,'USD',NULL,'2026-06-26 16:24:13');
+INSERT INTO inversiones_papas VALUES(17,'2023-12-18','BTC','compra',0.005338360000000000327,41464.0,223.5999999999999944,NULL,'USD',NULL,'2026-06-26 16:24:13');
+INSERT INTO inversiones_papas VALUES(18,'2023-12-31','BTC','compra',0.01624222999999999987,42512.0,690.42999999999995,NULL,'USD',NULL,'2026-06-26 16:24:13');
+INSERT INTO inversiones_papas VALUES(19,'2024-01-01','BTC','compra',0.00431896000000000016,42800.0,184.8799999999999955,NULL,'USD',NULL,'2026-06-26 16:24:13');
+INSERT INTO inversiones_papas VALUES(20,'2024-01-08','BTC','compra',0.01248208999999999951,47087.0,587.2100000000000363,NULL,'USD',NULL,'2026-06-26 16:24:13');
+INSERT INTO inversiones_papas VALUES(21,'2024-01-09','BTC','compra',0.01467306999999999987,46997.0,689.2100000000000363,NULL,'USD',NULL,'2026-06-26 16:24:13');
+INSERT INTO inversiones_papas VALUES(22,'2024-01-09','BTC','compra',0.01012569999999999964,46979.0,468.410000000000025,NULL,'USD',NULL,'2026-06-26 16:24:13');
+INSERT INTO inversiones_papas VALUES(23,'2024-02-05','BTC','compra',0.1204092199999999974,42600.0,5137.0,NULL,'USD',NULL,'2026-06-26 16:24:13');
+INSERT INTO inversiones_papas VALUES(24,'2024-03-27','BTC','compra',0.004733099999999999634,65000.0,328.0,NULL,'USD',NULL,'2026-06-26 16:24:13');
+INSERT INTO inversiones_papas VALUES(25,'2024-05-31','BTC','venta',0.03094030000000000044,67000.0,-2073.0,NULL,'USD',NULL,'2026-06-26 16:24:13');
+INSERT INTO inversiones_papas VALUES(26,'2025-02-20','BTC','compra',0.05000000000000000277,97500.0,4885.0,NULL,'USD',NULL,'2026-06-26 16:24:13');
+INSERT INTO inversiones_papas VALUES(27,'2025-03-06','BTC','venta',0.03964609000000000188,103478.0,-4102.5,NULL,'USD',NULL,'2026-06-26 16:24:13');
+INSERT INTO inversiones_papas VALUES(28,'2025-11-18','BTC','compra',0.005658589999999999801,93000.0,500.0,NULL,'USD',NULL,'2026-06-26 16:24:13');
+INSERT INTO inversiones_papas VALUES(29,'2023-01-01','BTC','compra',0.003407299999999999826,NULL,0.0,NULL,'USD','Ajuste histórico — saldo real conocido','2026-06-26 19:51:59');
+CREATE TABLE categorias (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre TEXT NOT NULL UNIQUE,
+    limite_mensual REAL,
+    tipo TEXT NOT NULL
+, moneda TEXT DEFAULT 'USD');
+INSERT INTO categorias VALUES(1,'Salario STG',NULL,'ingreso','USD');
+INSERT INTO categorias VALUES(2,'Vivienda',1500000.0,'gasto','COP');
+INSERT INTO categorias VALUES(5,'Salud',500000.0,'gasto','COP');
+INSERT INTO categorias VALUES(7,'Inversiones',NULL,'ahorro','USD');
+INSERT INTO categorias VALUES(8,'Ahorro emergencia',NULL,'ahorro','USD');
+INSERT INTO categorias VALUES(9,'Mercado',1000000.0,'gasto','COP');
+INSERT INTO categorias VALUES(10,'Gastos Pame',500000.0,'gasto','COP');
+INSERT INTO categorias VALUES(11,'Gastos Leo',500000.0,'gasto','COP');
+INSERT INTO categorias VALUES(14,'Ahorro',0.0,'ahorro','USD');
+INSERT INTO categorias VALUES(15,'Imprevisible',200000.0,'gasto','COP');
+INSERT INTO categorias VALUES(16,'Restaurantes',800000.0,'gasto','COP');
+INSERT INTO categorias VALUES(17,'Salario / ingresos',5000.0,'ingreso','USD');
+INSERT INTO categorias VALUES(19,'Lavanderia',10000.0,'gasto','COP');
+CREATE TABLE transacciones (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fecha TEXT NOT NULL,
+    categoria_id INTEGER REFERENCES categorias(id),
+    monto REAL NOT NULL,
+    descripcion TEXT,
+    tipo TEXT NOT NULL,
+    moneda TEXT DEFAULT 'USD',
+    creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+, afecta_cash INTEGER DEFAULT 1);
+INSERT INTO transacciones VALUES(3,'2026-06-26',2,1500000.0,'','gasto','USD','2026-06-26 19:28:19',1);
+INSERT INTO transacciones VALUES(5,'2026-07-01',2,1500000.0,'Arriendo julio','gasto','COP','2026-07-01 14:30:48',0);
+INSERT INTO transacciones VALUES(6,'2026-07-02',19,10000.0,'Gasto en la chaqueta que mandó Pamela a lavar','gasto','USD','2026-07-02 19:35:08',1);
+INSERT INTO transacciones VALUES(7,'2026-07-02',16,287000.0,'Cumpleaños Papá Leo','gasto','USD','2026-07-03 21:21:32',1);
+INSERT INTO transacciones VALUES(8,'2026-07-03',9,32000.0,'Huevos','gasto','USD','2026-07-03 21:21:50',1);
+INSERT INTO transacciones VALUES(9,'2026-07-04',16,240000.0,'Desayuno Despedida Papás','gasto','USD','2026-07-05 03:01:14',1);
+INSERT INTO transacciones VALUES(12,'2026-07-04',15,143000.0,'Regalo Baby shower Jaimito','gasto','USD','2026-07-05 03:04:54',1);
+INSERT INTO transacciones VALUES(13,'2026-07-05',10,22000.0,'Café Quindío','gasto','USD','2026-07-05 17:42:18',1);
+INSERT INTO transacciones VALUES(14,'2026-07-05',11,35000.0,'Lechona y Coctel de Camarones en el Éxito','gasto','USD','2026-07-05 17:43:04',1);
+INSERT INTO transacciones VALUES(15,'2026-07-05',9,128000.0,'Mercado Éxito ','gasto','USD','2026-07-05 17:43:28',1);
+INSERT INTO transacciones VALUES(16,'2026-07-06',10,67000.0,'Compras de cosas para tejer y otras vainas','gasto','USD','2026-07-06 17:24:56',1);
+INSERT INTO transacciones VALUES(17,'2026-07-07',9,15000.0,'Compras para las hamburguesas','gasto','USD','2026-07-07 19:08:24',1);
+INSERT INTO transacciones VALUES(18,'2026-07-09',9,37000.0,'Compras de Crema dental y leche','gasto','USD','2026-07-09 19:14:58',1);
+INSERT INTO transacciones VALUES(19,'2026-07-08',11,431000.0,'Storia D´amore','gasto','USD','2026-07-09 19:15:37',1);
+INSERT INTO transacciones VALUES(20,'2026-07-10',10,10000.0,'pan papá','gasto','USD','2026-07-10 23:29:54',1);
+INSERT INTO transacciones VALUES(21,'2026-07-11',10,15000.0,'careface pame','gasto','USD','2026-07-12 02:06:49',1);
+INSERT INTO transacciones VALUES(22,'2026-07-11',10,38000.0,'helados familia pame','gasto','USD','2026-07-12 02:07:36',1);
+INSERT INTO transacciones VALUES(23,'2026-07-09',16,63000.0,'Arroz Chino','gasto','USD','2026-07-12 17:46:32',1);
+INSERT INTO transacciones VALUES(24,'2026-07-10',9,61000.0,'Compras para palomitas','gasto','USD','2026-07-12 17:46:52',1);
+INSERT INTO transacciones VALUES(25,'2026-07-11',15,50000.0,'Fotos para Paraguay','gasto','USD','2026-07-12 17:47:13',1);
+INSERT INTO transacciones VALUES(26,'2026-07-11',11,24000.0,'Gastos en Datos para internet en mi celular','gasto','USD','2026-07-12 17:47:33',1);
+CREATE TABLE metas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre TEXT NOT NULL,
+    monto_objetivo REAL NOT NULL,
+    fecha_objetivo TEXT,
+    monto_actual REAL DEFAULT 0,
+    activa INTEGER DEFAULT 1,
+    notas TEXT,
+    creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+, tipo TEXT DEFAULT 'manual', btc_desde TEXT);
+INSERT INTO metas VALUES(1,'Comprar 1 Bitcoin',60000.0,'2030-12-31',0.0,1,'','2026-06-26 16:46:53','btc','2026-07-01');
+INSERT INTO metas VALUES(2,'Viaje Islandia',20000.0,'2026-06-29',0.0,0,'','2026-06-29 13:25:37','manual',NULL);
+INSERT INTO metas VALUES(3,'Viaje Islandia',20000.0,'2026-06-29',0.0,0,'','2026-06-29 13:26:18','cash',NULL);
+INSERT INTO metas VALUES(4,'Viaje Islandia',10000.0,'2027-07-30',0.0,0,'','2026-07-05 03:34:22','cash',NULL);
+CREATE TABLE ahorros (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    descripcion TEXT NOT NULL,
+    monto REAL NOT NULL,
+    moneda TEXT DEFAULT 'USD',
+    fecha_actualizacion TEXT,
+    notas TEXT
+, cuenta TEXT);
+INSERT INTO ahorros VALUES(1,'Cash',7000.0,'USD','2026-06-30',NULL,'Efectivo');
+INSERT INTO ahorros VALUES(2,'Cash',2691000.0,'COP','2026-07-12',NULL,'Efectivo');
+INSERT INTO ahorros VALUES(3,'Salario 17/06-30/06',2232.0,'USD','2026-07-03','','Listo Global');
+CREATE TABLE precios_mercado (
+    activo TEXT PRIMARY KEY,
+    precio_usd REAL,
+    actualizado_en TEXT
+);
+INSERT INTO precios_mercado VALUES('BTC',60000.0,'2026-06-26');
+CREATE TABLE deudas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    descripcion TEXT NOT NULL,
+    monto REAL NOT NULL,
+    moneda TEXT DEFAULT 'USD',
+    notas TEXT
+);
+CREATE TABLE config (
+    clave TEXT PRIMARY KEY,
+    valor TEXT
+);
+INSERT INTO config VALUES('tasa_cop_usd','3600');
+INSERT INTO config VALUES('moneda_budget','USD');
+CREATE TABLE meta_depositos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  meta_id INTEGER NOT NULL,
+  monto REAL NOT NULL,
+  moneda TEXT DEFAULT 'USD',
+  cuenta TEXT,
+  fecha TEXT,
+  notas TEXT,
+  creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+INSERT INTO meta_depositos VALUES(1,4,2000.0,'USD','Listo Global','2026-07-05','','2026-07-05 03:34:36');
+INSERT INTO meta_depositos VALUES(2,4,1200.0,'USD','Listo Global','2026-07-05','','2026-07-05 03:34:52');
+INSERT INTO sqlite_sequence VALUES('categorias',19);
+INSERT INTO sqlite_sequence VALUES('inversiones_personal',105);
+INSERT INTO sqlite_sequence VALUES('inversiones_papas',29);
+INSERT INTO sqlite_sequence VALUES('inversiones_family',20);
+INSERT INTO sqlite_sequence VALUES('ahorros',3);
+INSERT INTO sqlite_sequence VALUES('metas',4);
+INSERT INTO sqlite_sequence VALUES('transacciones',26);
+INSERT INTO sqlite_sequence VALUES('meta_depositos',2);
+COMMIT;

@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.pyo
+cfo.db
+logs/
+exports/
+data/
+.env
