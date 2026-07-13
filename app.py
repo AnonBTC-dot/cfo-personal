@@ -2,7 +2,6 @@
 
 from flask import Flask, jsonify, render_template_string, request
 from flask_cors import CORS
-import sqlite3
 import os
 from pathlib import Path
 from datetime import datetime, date
@@ -10,16 +9,41 @@ import math
 
 app = Flask(__name__)
 CORS(app)
-DB = os.environ.get("CFO_DB_PATH", str(Path.home() / "cfo/cfo.db"))
 
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
-def q(sql, p=()):
-    c = sqlite3.connect(DB); c.row_factory = sqlite3.Row
-    r = c.execute(sql, p).fetchall(); c.close()
-    return [dict(x) for x in r]
+if DATABASE_URL:
+    import psycopg2
+    import psycopg2.extras
 
-def ex(sql, p=()):
-    c = sqlite3.connect(DB); c.execute(sql, p); c.commit(); c.close()
+    def _conn():
+        return psycopg2.connect(DATABASE_URL)
+
+    def q(sql, p=()):
+        sql = sql.replace("?", "%s")
+        c = _conn(); cur = c.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(sql, p); r = cur.fetchall(); c.close()
+        return [dict(x) for x in r]
+
+    def ex(sql, p=()):
+        sql = sql.replace("?", "%s")
+        # ON CONFLICT syntax already PostgreSQL-compatible
+        sql = sql.replace("OR IGNORE INTO", "INTO").replace(
+            "INSERT OR IGNORE", "INSERT"
+        )
+        c = _conn(); cur = c.cursor(); cur.execute(sql, p); c.commit(); c.close()
+
+else:
+    import sqlite3
+    DB = os.environ.get("CFO_DB_PATH", str(Path.home() / "cfo/cfo.db"))
+
+    def q(sql, p=()):
+        c = sqlite3.connect(DB); c.row_factory = sqlite3.Row
+        r = c.execute(sql, p).fetchall(); c.close()
+        return [dict(x) for x in r]
+
+    def ex(sql, p=()):
+        c = sqlite3.connect(DB); c.execute(sql, p); c.commit(); c.close()
 
 def cfg(k): r = q("SELECT valor FROM config WHERE clave=?", (k,)); return r[0]["valor"] if r else None
 
