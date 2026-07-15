@@ -1255,12 +1255,13 @@ function editInvRow(id,fecha,tipo,monto,qty,precio,tabla,activo){
 }
 async function saveInvEdit(id,tabla,activo){
   const d={
-    id, tabla,
+    id, tabla, activo,
     fecha:document.getElementById('ie-fecha-'+id).value,
     tipo:document.getElementById('ie-tipo-'+id).value,
     monto_usd:parseMoney(document.getElementById('ie-monto-'+id).value),
     cantidad:parseFloat(document.getElementById('ie-qty-'+id).value)||null,
     precio_unitario:parseMoney(document.getElementById('ie-precio-'+id).value)||null,
+    notas:document.getElementById('ie-notas-'+id)?.value||'',
   };
   await fetch('/api/inversiones/editar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});
   const det=document.getElementById('inv-edit-'+id).closest('.asset-detail');
