@@ -1077,8 +1077,6 @@ async function loadHome(){
   // Cash breakdown
   const tasa=nw.tasa_cop;
   const ahData=await fetch('/api/ahorros').then(r=>r.json());
-  const mtData=await fetch('/api/metas').then(r=>r.json());
-  const savingsTotal=mtData.reduce((s,m)=>s+(m.monto_actual||0),0);
   const cashTotalUSD=nw.cash_usd+(nw.cash_cop/tasa);
   // Ajustar cada entrada con el flujo del mes (mismo criterio que la tarjeta Efectivo COP/USD)
   const rawT={};ahData.forEach(a=>rawT[a.moneda]=(rawT[a.moneda]||0)+a.monto);
@@ -1098,23 +1096,7 @@ async function loadHome(){
         <div style="font-size:12px;font-weight:600;color:var(--text2)">Liquidez total (equiv. USD)</div>
         <div style="font-size:18px;font-weight:800;color:var(--text)">${fmt(cashTotalUSD)}</div>
       </div>
-      ${savingsTotal>0?`
-      <div style="margin-top:4px;border-top:1px solid var(--border);padding-top:10px">
-        <div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Metas de ahorro</div>
-        ${mtData.map(m=>`
-          <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border2)">
-            <span style="font-size:13px;color:var(--text2)">${m.tipo==='btc'?'₿ ':''}${m.nombre}</span>
-            <span style="font-size:13px;font-weight:700;color:var(--accent)">${fmt(m.monto_actual)}</span>
-          </div>`).join('')}
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;margin-top:4px">
-          <span style="font-size:12px;font-weight:600;color:var(--text2)">Total guardado</span>
-          <span style="font-size:16px;font-weight:800;color:var(--accent)">${fmt(savingsTotal)}</span>
-        </div>
-      </div>
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;background:var(--accent-bg);border-radius:10px;border:1.5px solid var(--accent)">
-        <div style="font-size:12px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.5px">Líquido total</div>
-        <div style="font-size:20px;font-weight:800;color:var(--accent)">${fmt(cashTotalUSD+savingsTotal)}</div>
-      </div>`:''}
+
       ${nw.deudas>0?`<div style="display:flex;justify-content:space-between;align-items:center;padding:14px;background:var(--red-bg);border-radius:10px">
         <div><div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">Deudas</div>
           <div style="font-size:22px;font-weight:700;color:var(--red)">${fmt(nw.deudas)}</div></div>
