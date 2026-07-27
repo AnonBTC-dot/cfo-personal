@@ -513,7 +513,14 @@ def upd_config():
 DASH = """<!DOCTYPE html>
 <html lang="es">
 <head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#f7931a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="CFO">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/static/icon-192.png">
 <title>CFO Personal</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='85' fill='%23f7931a'>₿</text></svg>">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -731,6 +738,35 @@ tr:hover td{background:var(--bg)}
   main{padding:16px 16px 48px}
   .nav{padding:12px 16px 0}
   .header{padding:0 16px}
+}
+
+/* ── Fixes móvil ── */
+.tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.tbl-wrap table{min-width:520px}
+.asset-grid{grid-template-columns:repeat(auto-fill,minmax(min(100%,480px),1fr))}
+.asset-detail{-webkit-overflow-scrolling:touch}
+.nav{scrollbar-width:none}.nav::-webkit-scrollbar{display:none}
+.header{padding-top:env(safe-area-inset-top);height:calc(56px + env(safe-area-inset-top))}
+.modal-bg{padding:16px}
+.modal{max-height:90dvh;overflow-y:auto}
+@media(hover:none){
+  .budget-actions{opacity:1}
+}
+@media(max-width:640px){
+  .quick-add{flex-wrap:wrap;padding:12px 14px}
+  .quick-add input,.quick-add select{flex:1 1 45%;min-width:0}
+  .quick-add .btn{flex:1 1 100%;padding:12px}
+  .form-row .f-group{flex:1 1 45%;min-width:0}
+  .form-row .f-group input,.form-row .f-group select{width:100%;min-width:0}
+  .form-row .btn{flex:1 1 100%;padding:12px}
+  input,select{font-size:16px!important}
+  .hero{padding:22px 20px;border-radius:16px}
+  .modal{padding:24px;border-radius:18px}
+  th,td{padding:8px 10px}
+  .card-val{font-size:20px}
+  .cash-disponible{font-size:22px}
+  .asset-name{font-size:16px}
+  main{padding-bottom:calc(48px + env(safe-area-inset-bottom))}
 }
 </style>
 </head>
@@ -1850,9 +1886,49 @@ async function updPrecio(){
 // ── Init ──────────────────────────────────────────────────────────────────────
 loadHome();
 loadBudget();
+if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js").catch(()=>{});}
 </script>
 </body>
 </html>"""
+
+
+
+# ── PWA: manifest + service worker ────────────────────────────────────────────
+
+MANIFEST = {
+    "name": "CFO Personal",
+    "short_name": "CFO",
+    "description": "Tu centro financiero personal: inversiones, budget, ahorros y metas.",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#f2f2f7",
+    "theme_color": "#f7931a",
+    "orientation": "portrait",
+    "icons": [
+        {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png"},
+        {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png"},
+        {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+    ],
+}
+
+SW_JS = """const CACHE='cfo-v1';
+self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/'])))});
+self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
+self.addEventListener('fetch',e=>{
+  const u=new URL(e.request.url);
+  if(e.request.method!=='GET'||u.pathname.startsWith('/api/'))return; // API siempre en red
+  e.respondWith(fetch(e.request).then(r=>{const cp=r.clone();caches.open(CACHE).then(c=>c.put(e.request,cp));return r;}).catch(()=>caches.match(e.request)));
+});"""
+
+
+@app.route("/manifest.json")
+def manifest():
+    return jsonify(MANIFEST)
+
+
+@app.route("/sw.js")
+def service_worker():
+    return app.response_class(SW_JS, mimetype="application/javascript")
 
 
 @app.route("/")
