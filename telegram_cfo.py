@@ -7,12 +7,13 @@ Corre en Mac Mini con Ollama (qwen2.5:9b o qwen2.5:27b)
 import requests
 import sqlite3
 import json
+import os
 import time
 from pathlib import Path
 from datetime import date
 
-TELEGRAM_TOKEN = "8616752475:AAF6d_u7CXoyk-2QuSIpDU9z5jJBXsCaMJg"
-CHAT_ID        = 980622410
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
+CHAT_ID        = int(os.environ.get("TELEGRAM_CHAT_ID", "0"))
 DB_PATH        = str(Path.home() / "cfo/cfo.db")
 
 # Amadeus (vuelos) — registrarse gratis en developers.amadeus.com
