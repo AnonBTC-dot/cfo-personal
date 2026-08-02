@@ -758,6 +758,23 @@ tr:hover td{background:var(--bg)}
   .header{padding:0 16px}
 }
 
+/* ── Inputs de fecha ──
+   Safari/iOS les da un ancho intrínseco propio y se salían de su caja.
+   appearance:none + min-width:0 hace que respeten el contenedor. */
+input[type="date"],
+input[type="month"],
+input[type="time"]{
+  -webkit-appearance:none;
+  appearance:none;
+  min-width:0;
+  max-width:100%;
+  box-sizing:border-box;
+}
+.f-group input[type="date"]{width:100%;min-width:0}
+/* Safari centra el texto del date y descuadra la altura: lo alineamos */
+input[type="date"]::-webkit-date-and-time-value{text-align:left;margin:0}
+input[type="date"]::-webkit-calendar-picker-indicator{opacity:.55;cursor:pointer}
+
 /* ── Navegador de mes ── */
 .month-nav{display:flex;align-items:center;gap:4px}
 .month-btn{background:var(--bg);border:1px solid var(--border);border-radius:8px;
@@ -791,6 +808,8 @@ tr:hover td{background:var(--bg)}
   .quick-add input,.quick-add select{flex:1 1 45%;min-width:0}
   .quick-add .btn{flex:1 1 100%;padding:12px}
   .form-row .f-group{flex:1 1 45%;min-width:0}
+  .form-row .f-group input[type="date"]{width:100%}
+  .quick-add input[type="date"]{flex:1 1 100%!important}
   .form-row .f-group input,.form-row .f-group select{width:100%;min-width:0}
   .form-row .btn{flex:1 1 100%;padding:12px}
   input,select{font-size:16px!important}
@@ -862,7 +881,7 @@ tr:hover td{background:var(--bg)}
       <div class="f-group"><label>Tipo</label>
         <select id="i-tipo"><option value="compra">Compra</option><option value="venta">Venta</option></select></div>
       <div class="f-group"><label>Activo</label><input id="i-activo" placeholder="BTC" style="text-transform:uppercase"></div>
-      <div class="f-group"><label>Fecha</label><input id="i-fecha" type="date"></div>
+      <div class="f-group" style="flex:0 1 150px;min-width:0"><label>Fecha</label><input id="i-fecha" type="date"></div>
       <div class="f-group"><label>Monto USD</label><input id="i-monto" type="text" inputmode="decimal" data-money placeholder="500"></div>
       <div class="f-group"><label>Cantidad</label><input id="i-qty" type="number" step="0.00000001" placeholder="0.005"></div>
       <div class="f-group"><label>Precio por unidad</label><input id="i-precio" type="text" inputmode="decimal" data-money placeholder="100,000"></div>
@@ -887,7 +906,7 @@ tr:hover td{background:var(--bg)}
     <select id="qa-cat" style="flex:1.5"></select>
     <input id="qa-monto" type="text" inputmode="decimal" data-money placeholder="Monto gastado">
     <input id="qa-desc" placeholder="Descripción (opcional)">
-    <input id="qa-fecha" type="date" style="max-width:140px">
+    <input id="qa-fecha" type="date" style="flex:0 1 150px;min-width:0">
     <button class="btn btn-primary" onclick="addGasto()">+ Gasto</button>
   </div>
 
@@ -954,7 +973,7 @@ tr:hover td{background:var(--bg)}
         <div class="form-row" style="margin-top:12px">
           <div class="f-group"><label>Nombre</label><input id="m-nombre" placeholder="Viaje a Japón"></div>
           <div class="f-group"><label>Objetivo USD</label><input id="m-obj" type="text" inputmode="decimal" data-money placeholder="3,000"></div>
-          <div class="f-group"><label>Fecha objetivo</label><input id="m-fecha" type="date"></div>
+          <div class="f-group" style="flex:0 1 150px;min-width:0"><label>Fecha objetivo</label><input id="m-fecha" type="date"></div>
           <div class="f-group"><label>Tipo</label>
             <select id="m-tipo">
               <option value="cash">Cash (depósitos manuales)</option>
