@@ -273,39 +273,71 @@ def budget_cash():
         GROUP BY c.moneda, t.tipo
     """, (f"{mes}%",))
 
-    # ARRASTRE: todo lo movido ANTES de este mes. Sin esto, cada 1 de mes el
-    # saldo volvía al valor original de ahorros y se perdía lo del mes anterior.
-    previo = q("""
-        SELECT c.moneda, t.tipo, COALESCE(SUM(t.monto),0) as total
-        FROM transacciones t JOIN categorias c ON t.categoria_id=c.id
-        WHERE substr(t.fecha,1,7) < ? AND COALESCE(t.afecta_cash, 1) = 1
-        GROUP BY c.moneda, t.tipo
-    """, (mes,))
-
-    monedas = sorted(set(
-        list(saldo_map.keys())
-        + [x["moneda"] for x in flujo if x["moneda"]]
-        + [x["moneda"] for x in previo if x["moneda"]]
-    ))
+    monedas = sorted(set(list(saldo_map.keys()) + [x["moneda"] for x in flujo if x["moneda"]]))
     resultado = []
     for mon in monedas:
         if not mon: continue
         ingresos = sum(x["total"] for x in flujo if x["moneda"]==mon and x["tipo"]=="ingreso")
         gastos   = sum(x["total"] for x in flujo if x["moneda"]==mon and x["tipo"]=="gasto")
-        ing_prev = sum(x["total"] for x in previo if x["moneda"]==mon and x["tipo"]=="ingreso")
-        gas_prev = sum(x["total"] for x in previo if x["moneda"]==mon and x["tipo"]=="gasto")
         saldo    = saldo_map.get(mon, 0)
-        # Con lo que arrancaste el mes = ahorros base + todo lo de meses anteriores
-        arrastre = saldo + ing_prev - gas_prev
+        # `ahorros` = lo que TIENES en las cuentas ahora mismo (tú lo actualizas).
+        # Por eso el disponible es ese saldo + lo que entre - lo que gastes en el
+        # mes. NO se acumulan los meses anteriores: eso restaría dos veces lo ya
+        # descontado del saldo real.
         resultado.append({
             "moneda": mon,
             "saldo_ahorros": saldo,
-            "arrastre": arrastre,          # saldo con el que empiezas el mes
             "ingresos_mes": ingresos,
             "gastos_mes": gastos,
-            "disponible": arrastre + ingresos - gastos,
+            "disponible": saldo + ingresos - gastos,
         })
     return jsonify(resultado)
+
+@app.route("/api/budget/cerrar-mes", methods=["POST"])
+def cerrar_mes():
+    """
+    Guarda el saldo con el que cierras el mes como saldo real de tus cuentas.
+    Así el mes siguiente arranca desde ahí en vez de volver al valor viejo.
+    Lo haces tú a propósito (no automático) para que nunca se reste dos veces.
+    """
+    data = request.get_json(force=True) or {}
+    mes = data.get("mes") or datetime.now().strftime("%Y-%m")
+
+    saldos = q("SELECT moneda, SUM(monto) as total FROM ahorros GROUP BY moneda")
+    saldo_map = {x["moneda"]: x["total"] for x in saldos}
+    flujo = q("""
+        SELECT c.moneda, t.tipo, COALESCE(SUM(t.monto),0) as total
+        FROM transacciones t JOIN categorias c ON t.categoria_id=c.id
+        WHERE t.fecha LIKE ? AND COALESCE(t.afecta_cash, 1) = 1
+        GROUP BY c.moneda, t.tipo
+    """, (f"{mes}%",))
+
+    actualizados = []
+    for mon, saldo in saldo_map.items():
+        if not mon: continue
+        ing = sum(x["total"] for x in flujo if x["moneda"]==mon and x["tipo"]=="ingreso")
+        gas = sum(x["total"] for x in flujo if x["moneda"]==mon and x["tipo"]=="gasto")
+        nuevo = saldo + ing - gas
+        if abs(nuevo - saldo) < 0.01: continue
+        # Reparte el nuevo saldo entre las cuentas de esa moneda, proporcional
+        cuentas = q("SELECT id, monto FROM ahorros WHERE moneda=?", (mon,))
+        total_old = sum(c["monto"] for c in cuentas) or 1
+        for c in cuentas:
+            ex("UPDATE ahorros SET monto=? WHERE id=?", (nuevo * (c["monto"]/total_old), c["id"]))
+        actualizados.append({"moneda": mon, "antes": saldo, "ahora": nuevo})
+    return jsonify({"ok": True, "mes": mes, "actualizados": actualizados})
+
+
+@app.route("/api/budget/limpiar-mes", methods=["POST"])
+def limpiar_mes():
+    """Borra los movimientos de un mes para empezarlo de cero.
+    No toca los saldos de ahorros: arriba seguirás viendo tu dinero real."""
+    data = request.get_json(force=True) or {}
+    mes = data.get("mes") or datetime.now().strftime("%Y-%m")
+    antes = q("SELECT COUNT(*) as n FROM transacciones WHERE fecha LIKE ?", (f"{mes}%",))
+    ex("DELETE FROM transacciones WHERE fecha LIKE ?", (f"{mes}%",))
+    return jsonify({"ok": True, "mes": mes, "borrados": antes[0]["n"] if antes else 0})
+
 
 @app.route("/api/budget/recientes")
 def budget_recientes():
@@ -902,6 +934,14 @@ input[type="date"]::-webkit-calendar-picker-indicator{opacity:.55;cursor:pointer
 <!-- ── BUDGET ── -->
 <div class="tab" id="tab-budget">
   <div class="cash-panel" id="budget-cash"></div>
+  <div id="acciones-mes" style="margin-bottom:20px;display:flex;gap:8px;flex-wrap:wrap">
+    <button class="btn btn-outline" style="flex:1;min-width:150px" onclick="cerrarMes()" id="btn-cerrar">
+      📌 Guardar saldo final
+    </button>
+    <button class="btn btn-outline" style="flex:1;min-width:150px" onclick="limpiarMes()" id="btn-limpiar">
+      🗑 Empezar mes de cero
+    </button>
+  </div>
   <div class="quick-add">
     <select id="qa-cat" style="flex:1.5"></select>
     <input id="qa-monto" type="text" inputmode="decimal" data-money placeholder="Monto gastado">
@@ -1406,6 +1446,21 @@ function fmtM(n,mon){
   return s+Number(n).toLocaleString('en-US',{maximumFractionDigits:0});
 }
 
+async function limpiarMes(){
+  if(!confirm(`Se borrarán TODOS los movimientos de ${MES}.\n\nTu dinero en Ahorros y Metas no se toca: arriba seguirás viendo tus saldos reales.\n\n¿Empezar este mes de cero?`)) return;
+  const r = await fetch('/api/budget/limpiar-mes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mes:MES})}).then(x=>x.json());
+  loadBudget(); loadAhorros(); loadHome();
+  alert(`Mes ${MES} en cero (${r.borrados} movimientos borrados).`);
+}
+
+async function cerrarMes(){
+  const r = await fetch('/api/budget/cash?mes='+MES).then(x=>x.json());
+  const resumen = r.map(c=>`${c.moneda}: ${fmtM(c.disponible,c.moneda)}`).join('\n');
+  if(!confirm(`Se guardará como saldo de tus cuentas:\n\n${resumen}\n\nLos movimientos del mes quedan registrados igual. ¿Continuar?`)) return;
+  await fetch('/api/budget/cerrar-mes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mes:MES})});
+  loadBudget(); loadAhorros(); loadHome();
+}
+
 async function loadBudget(){
   const [cats,rec,cash]=await Promise.all([
     fetch('/api/budget/mes?mes='+MES).then(r=>r.json()),
@@ -1416,7 +1471,7 @@ async function loadBudget(){
   // Cash panel — disponible = saldo_ahorros + ingresos_mes - gastos_mes
   $('budget-cash').innerHTML = cash.length ? cash.map(c=>{
     const cls = MONEDA_CLS[c.moneda]||'other';
-    const base = (c.arrastre ?? c.saldo_ahorros) + (c.ingresos_mes||0);
+    const base = (c.saldo_ahorros||0) + (c.ingresos_mes||0);
     const pctGastado = c.gastos_mes && base > 0
       ? Math.min(100, Math.round(c.gastos_mes / base * 100)) : 0;
     const barCls = pctGastado < 50 ? 'bar-green' : pctGastado < 80 ? 'bar-amber' : 'bar-red';
@@ -1424,7 +1479,7 @@ async function loadBudget(){
       <div class="cash-moneda">💵 Efectivo ${c.moneda}</div>
       <div class="cash-disponible">${fmtM(c.disponible, c.moneda)}</div>
       <div class="cash-rows">
-        <div class="cash-row"><span class="cash-row-lbl">Vienes del mes anterior con</span><span class="cash-row-val base">${fmtM(c.arrastre ?? c.saldo_ahorros, c.moneda)}</span></div>
+        <div class="cash-row"><span class="cash-row-lbl">Saldo en cuentas</span><span class="cash-row-val base">${fmtM(c.saldo_ahorros, c.moneda)}</span></div>
         ${c.ingresos_mes>0?`<div class="cash-row"><span class="cash-row-lbl">+ Ingresos del mes</span><span class="cash-row-val in">+${fmtM(c.ingresos_mes,c.moneda)}</span></div>`:''}
         ${c.gastos_mes>0?`
         <div class="cash-row"><span class="cash-row-lbl">− Gastado en el mes</span><span class="cash-row-val out">−${fmtM(c.gastos_mes,c.moneda)}</span></div>
@@ -1433,6 +1488,10 @@ async function loadBudget(){
       </div>
     </div>`;
   }).join('') : '';
+
+  const hayMovimientos = cash.some(c=>(c.ingresos_mes||0)+(c.gastos_mes||0) > 0);
+  $('btn-cerrar').style.display = hayMovimientos ? 'block' : 'none';
+  $('btn-limpiar').style.display = hayMovimientos ? 'block' : 'none';
 
   // Populate category select
   const sel=$('qa-cat');
@@ -1556,12 +1615,12 @@ async function loadAhorros(){
   ]);
   const tasa=parseFloat(cfg.tasa_cop_usd||4050);
 
-  // Ajuste por moneda = TODO lo movido hasta el mes que estás viendo, no solo
-  // el mes en curso. Así el dinero con el que cerraste julio es con el que
-  // aparece agosto, en vez de volver al saldo original de ahorros.
+  // Ajuste = movimientos DEL MES que estás viendo. Cada mes es independiente:
+  // el saldo de `ahorros` es lo que tienes hoy en las cuentas, así que sumarle
+  // meses anteriores restaría dos veces lo que ya está descontado.
   const adj={};
   for(const c of cashData){
-    adj[c.moneda] = (c.disponible||0) - (c.saldo_ahorros||0);
+    adj[c.moneda] = (c.ingresos_mes||0) - (c.gastos_mes||0);
   }
 
   // For display: distribute adjustment proportionally among entries of same currency
@@ -2001,7 +2060,7 @@ MANIFEST = {
     ],
 }
 
-SW_JS = """const CACHE='cfo-v2';
+SW_JS = """const CACHE='cfo-v3';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{
