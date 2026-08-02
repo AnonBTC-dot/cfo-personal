@@ -265,7 +265,7 @@ def budget_cash():
     saldos = q("SELECT moneda, SUM(monto) as total FROM ahorros GROUP BY moneda")
     saldo_map = {x["moneda"]: x["total"] for x in saldos}
 
-    # Ingresos y gastos del mes por moneda (excluye transacciones que no afectan cash)
+    # Ingresos y gastos DEL MES seleccionado (excluye lo que no afecta cash)
     flujo = q("""
         SELECT c.moneda, t.tipo, COALESCE(SUM(t.monto),0) as total
         FROM transacciones t JOIN categorias c ON t.categoria_id=c.id
@@ -273,25 +273,43 @@ def budget_cash():
         GROUP BY c.moneda, t.tipo
     """, (f"{mes}%",))
 
-    monedas = sorted(set(list(saldo_map.keys()) + [x["moneda"] for x in flujo if x["moneda"]]))
+    # ARRASTRE: todo lo movido ANTES de este mes. Sin esto, cada 1 de mes el
+    # saldo volvía al valor original de ahorros y se perdía lo del mes anterior.
+    previo = q("""
+        SELECT c.moneda, t.tipo, COALESCE(SUM(t.monto),0) as total
+        FROM transacciones t JOIN categorias c ON t.categoria_id=c.id
+        WHERE substr(t.fecha,1,7) < ? AND COALESCE(t.afecta_cash, 1) = 1
+        GROUP BY c.moneda, t.tipo
+    """, (mes,))
+
+    monedas = sorted(set(
+        list(saldo_map.keys())
+        + [x["moneda"] for x in flujo if x["moneda"]]
+        + [x["moneda"] for x in previo if x["moneda"]]
+    ))
     resultado = []
     for mon in monedas:
         if not mon: continue
         ingresos = sum(x["total"] for x in flujo if x["moneda"]==mon and x["tipo"]=="ingreso")
         gastos   = sum(x["total"] for x in flujo if x["moneda"]==mon and x["tipo"]=="gasto")
+        ing_prev = sum(x["total"] for x in previo if x["moneda"]==mon and x["tipo"]=="ingreso")
+        gas_prev = sum(x["total"] for x in previo if x["moneda"]==mon and x["tipo"]=="gasto")
         saldo    = saldo_map.get(mon, 0)
+        # Con lo que arrancaste el mes = ahorros base + todo lo de meses anteriores
+        arrastre = saldo + ing_prev - gas_prev
         resultado.append({
             "moneda": mon,
             "saldo_ahorros": saldo,
+            "arrastre": arrastre,          # saldo con el que empiezas el mes
             "ingresos_mes": ingresos,
             "gastos_mes": gastos,
-            "disponible": saldo + ingresos - gastos,
+            "disponible": arrastre + ingresos - gastos,
         })
     return jsonify(resultado)
 
 @app.route("/api/budget/recientes")
 def budget_recientes():
-    mes = datetime.now().strftime("%Y-%m")
+    mes = request.args.get("mes", datetime.now().strftime("%Y-%m"))
     return jsonify(q("""SELECT t.id,t.fecha,t.monto,t.descripcion,t.tipo,c.nombre as categoria
         FROM transacciones t JOIN categorias c ON t.categoria_id=c.id
         WHERE t.fecha LIKE ? ORDER BY t.fecha DESC, t.id DESC LIMIT 30""", (f"{mes}%",)))
@@ -740,6 +758,19 @@ tr:hover td{background:var(--bg)}
   .header{padding:0 16px}
 }
 
+/* ── Navegador de mes ── */
+.month-nav{display:flex;align-items:center;gap:4px}
+.month-btn{background:var(--bg);border:1px solid var(--border);border-radius:8px;
+  width:28px;height:28px;font-size:16px;line-height:1;color:var(--text2);cursor:pointer;
+  font-family:inherit;display:flex;align-items:center;justify-content:center;padding:0}
+.month-btn:hover{background:var(--border);color:var(--text)}
+.month-hoy{width:auto;padding:0 10px;font-size:11px;font-weight:600}
+#mes-picker{background:var(--bg);border:1px solid var(--border);border-radius:8px;
+  padding:5px 8px;font-size:12px;font-family:inherit;color:var(--text);outline:none;
+  min-width:130px}
+#mes-picker:focus{border-color:var(--accent)}
+.mes-viejo{background:var(--amber-bg)!important;border-color:var(--amber)!important}
+
 /* ── Fixes móvil ── */
 .tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
 .tbl-wrap table{min-width:520px}
@@ -753,6 +784,9 @@ tr:hover td{background:var(--bg)}
   .budget-actions{opacity:1}
 }
 @media(max-width:640px){
+  .header{padding:0 12px}
+  .header-title{display:none}
+  #mes-picker{min-width:112px;font-size:11px;padding:4px 6px}
   .quick-add{flex-wrap:wrap;padding:12px 14px}
   .quick-add input,.quick-add select{flex:1 1 45%;min-width:0}
   .quick-add .btn{flex:1 1 100%;padding:12px}
@@ -778,7 +812,12 @@ tr:hover td{background:var(--bg)}
     <div class="header-logo">C</div>
     <span class="header-title">CFO Personal</span>
   </div>
-  <span class="header-date" id="hdr-date"></span>
+  <div class="month-nav">
+    <button class="month-btn" onclick="cambiarMes(-1)" aria-label="Mes anterior">‹</button>
+    <input type="month" id="mes-picker" onchange="setMes(this.value)">
+    <button class="month-btn" onclick="cambiarMes(1)" aria-label="Mes siguiente">›</button>
+    <button class="month-btn month-hoy" onclick="setMes(mesActual())" id="btn-hoy">Hoy</button>
+  </div>
 </div>
 
 <!-- ── NAV ── -->
@@ -956,6 +995,34 @@ const $ = id => document.getElementById(id);
 const fmt = (n,d=0) => n==null?'—':'$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
 const fmtCOP = n => Number(n).toLocaleString('es-CO');
 const today = () => new Date().toISOString().split('T')[0];
+
+// ── Mes que estás viendo (puedes volver a meses pasados) ──────────────────────
+const mesActual = () => new Date().toISOString().slice(0,7);
+let MES = mesActual();
+
+function pintarMes(){
+  $('mes-picker').value = MES;
+  const viejo = MES !== mesActual();
+  $('mes-picker').classList.toggle('mes-viejo', viejo);
+  $('btn-hoy').style.display = viejo ? 'flex' : 'none';
+  // La fecha por defecto al anotar cae dentro del mes que estás viendo
+  const qa = $('qa-fecha');
+  if (qa) qa.value = viejo ? MES + '-15' : today();
+}
+
+function setMes(v){
+  if(!v) return;
+  MES = v;
+  pintarMes();
+  loadBudget();
+  loadHome();
+}
+
+function cambiarMes(delta){
+  const [y,m] = MES.split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  setMes(d.toISOString().slice(0,7));
+}
 const COLORS = ['#6366f1','#8b5cf6','#06b6d4','#10b981','#f59e0b','#ef4444','#ec4899','#3b82f6'];
 
 // ── Money input formatting ────────────────────────────────────────────────────
@@ -977,7 +1044,7 @@ document.addEventListener('input', e => {
 
 // Set today on date inputs
 document.querySelectorAll('input[type=date]').forEach(i=>i.value=today());
-$('hdr-date').textContent = new Date().toLocaleDateString('es-CO',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+pintarMes();
 $('mes-label').textContent = new Date().toLocaleDateString('es-CO',{month:'long',year:'numeric'});
 
 // ── Navigation ────────────────────────────────────────────────────────────────
@@ -1004,7 +1071,7 @@ const legendOpts={position:'bottom',labels:{color:'#6e6e73',font:{size:11},paddi
 async function loadHome(){
   const [nw,bud]=await Promise.all([
     fetch('/api/networth').then(r=>r.json()),
-    fetch('/api/budget/mes').then(r=>r.json())
+    fetch('/api/budget/mes?mes='+MES).then(r=>r.json())
   ]);
 
   $('nw-val').textContent=fmt(nw.net_worth);
@@ -1322,25 +1389,26 @@ function fmtM(n,mon){
 
 async function loadBudget(){
   const [cats,rec,cash]=await Promise.all([
-    fetch('/api/budget/mes').then(r=>r.json()),
-    fetch('/api/budget/recientes').then(r=>r.json()),
-    fetch('/api/budget/cash').then(r=>r.json()),
+    fetch('/api/budget/mes?mes='+MES).then(r=>r.json()),
+    fetch('/api/budget/recientes?mes='+MES).then(r=>r.json()),
+    fetch('/api/budget/cash?mes='+MES).then(r=>r.json()),
   ]);
 
   // Cash panel — disponible = saldo_ahorros + ingresos_mes - gastos_mes
   $('budget-cash').innerHTML = cash.length ? cash.map(c=>{
     const cls = MONEDA_CLS[c.moneda]||'other';
-    const pctGastado = c.gastos_mes && c.saldo_ahorros
-      ? Math.min(100, Math.round(c.gastos_mes / (c.saldo_ahorros + c.gastos_mes) * 100)) : 0;
+    const base = (c.arrastre ?? c.saldo_ahorros) + (c.ingresos_mes||0);
+    const pctGastado = c.gastos_mes && base > 0
+      ? Math.min(100, Math.round(c.gastos_mes / base * 100)) : 0;
     const barCls = pctGastado < 50 ? 'bar-green' : pctGastado < 80 ? 'bar-amber' : 'bar-red';
     return `<div class="cash-card ${cls}">
       <div class="cash-moneda">💵 Efectivo ${c.moneda}</div>
       <div class="cash-disponible">${fmtM(c.disponible, c.moneda)}</div>
       <div class="cash-rows">
-        ${c.ingresos_mes>0?`<div class="cash-row"><span class="cash-row-lbl">+ Ingresos registrados</span><span class="cash-row-val in">+${fmtM(c.ingresos_mes,c.moneda)}</span></div>`:''}
+        <div class="cash-row"><span class="cash-row-lbl">Vienes del mes anterior con</span><span class="cash-row-val base">${fmtM(c.arrastre ?? c.saldo_ahorros, c.moneda)}</span></div>
+        ${c.ingresos_mes>0?`<div class="cash-row"><span class="cash-row-lbl">+ Ingresos del mes</span><span class="cash-row-val in">+${fmtM(c.ingresos_mes,c.moneda)}</span></div>`:''}
         ${c.gastos_mes>0?`
-        <div class="cash-divider"></div>
-        <div class="cash-row"><span class="cash-row-lbl">Gastado este mes</span><span class="cash-row-val out">−${fmtM(c.gastos_mes,c.moneda)}</span></div>
+        <div class="cash-row"><span class="cash-row-lbl">− Gastado en el mes</span><span class="cash-row-val out">−${fmtM(c.gastos_mes,c.moneda)}</span></div>
         <div class="bar-track" style="margin-top:4px"><div class="bar-fill ${barCls}" style="width:${pctGastado}%"></div></div>
         `:''}
       </div>
@@ -1464,15 +1532,17 @@ async function loadAhorros(){
   const [ah,mt,cashData,cfg]=await Promise.all([
     fetch('/api/ahorros').then(r=>r.json()),
     fetch('/api/metas').then(r=>r.json()),
-    fetch('/api/budget/cash').then(r=>r.json()),
+    fetch('/api/budget/cash?mes='+MES).then(r=>r.json()),
     fetch('/api/config').then(r=>r.json())
   ]);
   const tasa=parseFloat(cfg.tasa_cop_usd||4050);
 
-  // Build adjustment map: moneda → (ingresos_mes - gastos_mes)
+  // Ajuste por moneda = TODO lo movido hasta el mes que estás viendo, no solo
+  // el mes en curso. Así el dinero con el que cerraste julio es con el que
+  // aparece agosto, en vez de volver al saldo original de ahorros.
   const adj={};
   for(const c of cashData){
-    adj[c.moneda] = (c.ingresos_mes||0) - (c.gastos_mes||0);
+    adj[c.moneda] = (c.disponible||0) - (c.saldo_ahorros||0);
   }
 
   // For display: distribute adjustment proportionally among entries of same currency
@@ -1884,6 +1954,7 @@ async function updPrecio(){
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
+pintarMes();
 loadHome();
 loadBudget();
 if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js").catch(()=>{});}
@@ -1911,7 +1982,7 @@ MANIFEST = {
     ],
 }
 
-SW_JS = """const CACHE='cfo-v1';
+SW_JS = """const CACHE='cfo-v2';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{
