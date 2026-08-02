@@ -1447,7 +1447,7 @@ function fmtM(n,mon){
 }
 
 async function limpiarMes(){
-  if(!confirm(`Se borrarán TODOS los movimientos de ${MES}.\n\nTu dinero en Ahorros y Metas no se toca: arriba seguirás viendo tus saldos reales.\n\n¿Empezar este mes de cero?`)) return;
+  if(!confirm(`Se borrarán TODOS los movimientos de ${MES}.\\n\\nTu dinero en Ahorros y Metas no se toca: arriba seguirás viendo tus saldos reales.\\n\\n¿Empezar este mes de cero?`)) return;
   const r = await fetch('/api/budget/limpiar-mes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mes:MES})}).then(x=>x.json());
   loadBudget(); loadAhorros(); loadHome();
   alert(`Mes ${MES} en cero (${r.borrados} movimientos borrados).`);
@@ -1455,8 +1455,8 @@ async function limpiarMes(){
 
 async function cerrarMes(){
   const r = await fetch('/api/budget/cash?mes='+MES).then(x=>x.json());
-  const resumen = r.map(c=>`${c.moneda}: ${fmtM(c.disponible,c.moneda)}`).join('\n');
-  if(!confirm(`Se guardará como saldo de tus cuentas:\n\n${resumen}\n\nLos movimientos del mes quedan registrados igual. ¿Continuar?`)) return;
+  const resumen = r.map(c=>`${c.moneda}: ${fmtM(c.disponible,c.moneda)}`).join('\\n');
+  if(!confirm(`Se guardará como saldo de tus cuentas:\\n\\n${resumen}\\n\\nLos movimientos del mes quedan registrados igual. ¿Continuar?`)) return;
   await fetch('/api/budget/cerrar-mes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mes:MES})});
   loadBudget(); loadAhorros(); loadHome();
 }
@@ -2060,7 +2060,7 @@ MANIFEST = {
     ],
 }
 
-SW_JS = """const CACHE='cfo-v3';
+SW_JS = """const CACHE='cfo-v4';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{
