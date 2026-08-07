@@ -277,7 +277,7 @@ def budget_cash():
     """
     mes = request.args.get("mes", datetime.now().strftime("%Y-%m"))
 
-    cuentas = q("SELECT id, descripcion, monto, moneda FROM ahorros ORDER BY moneda, descripcion")
+    cuentas = q("SELECT id, descripcion, monto, moneda, cuenta FROM ahorros ORDER BY moneda, cuenta, descripcion")
 
     # Movimientos del mes con la cuenta a la que se cargaron
     movs = q("""
@@ -298,7 +298,10 @@ def budget_cash():
         gas = suma(c["id"], "gasto")
         resultado.append({
             "cuenta_id": c["id"],
-            "nombre": c["descripcion"],
+            # El nombre visible es dónde está guardado (GrabFi, Listo Global...);
+            # la descripción queda como detalle secundario.
+            "nombre": (c.get("cuenta") or "").strip() or c["descripcion"],
+            "descripcion": c["descripcion"],
             "moneda": c["moneda"],
             "saldo_ahorros": c["monto"],
             "ingresos_mes": ing,
@@ -344,7 +347,7 @@ def cerrar_mes():
     """, (f"{mes}%",))
 
     actualizados = []
-    for c in q("SELECT id, descripcion, monto, moneda FROM ahorros"):
+    for c in q("SELECT id, descripcion, monto, moneda, cuenta FROM ahorros"):
         ing = sum(m["total"] for m in movs if m["cuenta_id"] == c["id"] and m["tipo"] == "ingreso")
         gas = sum(m["total"] for m in movs if m["cuenta_id"] == c["id"] and m["tipo"] == "gasto")
         nuevo = c["monto"] + ing - gas
@@ -352,7 +355,7 @@ def cerrar_mes():
             continue
         ex("UPDATE ahorros SET monto=?, fecha_actualizacion=? WHERE id=?",
            (nuevo, date.today().isoformat(), c["id"]))
-        actualizados.append({"cuenta": c["descripcion"], "moneda": c["moneda"],
+        actualizados.append({"cuenta": (c.get("cuenta") or "").strip() or c["descripcion"], "moneda": c["moneda"],
                              "antes": c["monto"], "ahora": nuevo})
     return jsonify({"ok": True, "mes": mes, "actualizados": actualizados})
 
@@ -472,8 +475,9 @@ def ahorros():
 @app.route("/api/ahorros/agregar", methods=["POST"])
 def add_ahorro():
     d = request.json
-    ex("INSERT INTO ahorros(descripcion,monto,moneda,fecha_actualizacion,notas) VALUES(?,?,?,?,?)",
-       (d["descripcion"], float(d["monto"]), d.get("moneda","USD"), date.today().isoformat(), d.get("notas","")))
+    ex("INSERT INTO ahorros(descripcion,monto,moneda,fecha_actualizacion,notas,cuenta) VALUES(?,?,?,?,?,?)",
+       (d["descripcion"], float(d["monto"]), d.get("moneda","USD"), date.today().isoformat(),
+        d.get("notas",""), d.get("cuenta","")))
     return jsonify({"ok": True})
 
 @app.route("/api/ahorros/actualizar", methods=["POST"])
@@ -1548,6 +1552,8 @@ async function loadBudget(){
     return `<div class="cash-card ${cls}" ${c.sin_asignar?'style="opacity:.75"':''}>
       <div class="cash-moneda">${c.sin_asignar?'⚠️':'💳'} ${c.nombre} · ${c.moneda}</div>
       <div class="cash-disponible">${fmtM(c.disponible, c.moneda)}</div>
+      ${!c.sin_asignar && c.descripcion && c.descripcion!==c.nombre
+        ? `<div style="font-size:11px;color:var(--text3);margin:-6px 0 8px">${c.descripcion}</div>` : ''}
       <div class="cash-rows">
         ${c.sin_asignar
           ? `<div class="cash-row"><span class="cash-row-lbl">Gastos antiguos sin cuenta</span></div>`
@@ -1564,7 +1570,7 @@ async function loadBudget(){
   // Selector de cuenta del gasto rápido
   const selC=$('qa-cuenta'), prev=selC.value;
   selC.innerHTML='<option value="">¿De qué cuenta?</option>'+
-    cash.filter(c=>!c.sin_asignar).map(c=>`<option value="${c.cuenta_id}">${c.nombre} (${c.moneda})</option>`).join('');
+    cash.filter(c=>!c.sin_asignar).map(c=>`<option value="${c.cuenta_id}">${c.nombre}${c.descripcion&&c.descripcion!==c.nombre?' · '+c.descripcion:''} (${c.moneda})</option>`).join('');
   if(prev) selC.value=prev;
 
   const hayMovimientos = cash.some(c=>(c.ingresos_mes||0)+(c.gastos_mes||0) > 0);
@@ -2193,7 +2199,7 @@ MANIFEST = {
     ],
 }
 
-SW_JS = """const CACHE='cfo-v6';
+SW_JS = """const CACHE='cfo-v7';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{
