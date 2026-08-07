@@ -45,6 +45,16 @@ else:
     def ex(sql, p=()):
         c = sqlite3.connect(DB); c.execute(sql, p); c.commit(); c.close()
 
+def _migrar():
+    """Añade transacciones.cuenta_id si falta. Idempotente en SQLite y Postgres."""
+    try:
+        ex("ALTER TABLE transacciones ADD COLUMN cuenta_id INTEGER")
+    except Exception:
+        pass  # ya existe
+
+_migrar()
+
+
 def cfg(k): r = q("SELECT valor FROM config WHERE clave=?", (k,)); return r[0]["valor"] if r else None
 
 
@@ -260,71 +270,90 @@ def budget_mes():
 
 @app.route("/api/budget/cash")
 def budget_cash():
+    """
+    Liquidez POR CUENTA. Antes se agrupaba solo por moneda y un gasto en USD se
+    repartía entre todas las cuentas en dólares, descontando de Cash aunque
+    hubieras pagado con otra. Ahora cada gasto descuenta de la cuenta que elijas.
+    """
     mes = request.args.get("mes", datetime.now().strftime("%Y-%m"))
-    # Cash actual en ahorros (solo efectivo real, no inversiones)
-    saldos = q("SELECT moneda, SUM(monto) as total FROM ahorros GROUP BY moneda")
-    saldo_map = {x["moneda"]: x["total"] for x in saldos}
 
-    # Ingresos y gastos DEL MES seleccionado (excluye lo que no afecta cash)
-    flujo = q("""
-        SELECT c.moneda, t.tipo, COALESCE(SUM(t.monto),0) as total
+    cuentas = q("SELECT id, descripcion, monto, moneda FROM ahorros ORDER BY moneda, descripcion")
+
+    # Movimientos del mes con la cuenta a la que se cargaron
+    movs = q("""
+        SELECT t.cuenta_id, c.moneda, t.tipo, COALESCE(SUM(t.monto),0) as total
         FROM transacciones t JOIN categorias c ON t.categoria_id=c.id
         WHERE t.fecha LIKE ? AND COALESCE(t.afecta_cash, 1) = 1
-        GROUP BY c.moneda, t.tipo
+        GROUP BY t.cuenta_id, c.moneda, t.tipo
     """, (f"{mes}%",))
 
-    monedas = sorted(set(list(saldo_map.keys()) + [x["moneda"] for x in flujo if x["moneda"]]))
+    def suma(cuenta_id, tipo, moneda=None):
+        return sum(m["total"] for m in movs
+                   if m["cuenta_id"] == cuenta_id and m["tipo"] == tipo
+                   and (moneda is None or m["moneda"] == moneda))
+
     resultado = []
-    for mon in monedas:
-        if not mon: continue
-        ingresos = sum(x["total"] for x in flujo if x["moneda"]==mon and x["tipo"]=="ingreso")
-        gastos   = sum(x["total"] for x in flujo if x["moneda"]==mon and x["tipo"]=="gasto")
-        saldo    = saldo_map.get(mon, 0)
-        # `ahorros` = lo que TIENES en las cuentas ahora mismo (tú lo actualizas).
-        # Por eso el disponible es ese saldo + lo que entre - lo que gastes en el
-        # mes. NO se acumulan los meses anteriores: eso restaría dos veces lo ya
-        # descontado del saldo real.
+    for c in cuentas:
+        ing = suma(c["id"], "ingreso")
+        gas = suma(c["id"], "gasto")
         resultado.append({
+            "cuenta_id": c["id"],
+            "nombre": c["descripcion"],
+            "moneda": c["moneda"],
+            "saldo_ahorros": c["monto"],
+            "ingresos_mes": ing,
+            "gastos_mes": gas,
+            "disponible": c["monto"] + ing - gas,
+        })
+
+    # Movimientos sin cuenta asignada (los antiguos): se muestran aparte por
+    # moneda para que no desaparezcan ni ensucien el saldo de una cuenta real.
+    monedas_sueltas = sorted({m["moneda"] for m in movs if m["cuenta_id"] is None and m["moneda"]})
+    for mon in monedas_sueltas:
+        ing = suma(None, "ingreso", mon)
+        gas = suma(None, "gasto", mon)
+        if ing == 0 and gas == 0:
+            continue
+        resultado.append({
+            "cuenta_id": None,
+            "nombre": "Sin cuenta asignada",
             "moneda": mon,
-            "saldo_ahorros": saldo,
-            "ingresos_mes": ingresos,
-            "gastos_mes": gastos,
-            "disponible": saldo + ingresos - gastos,
+            "saldo_ahorros": 0,
+            "ingresos_mes": ing,
+            "gastos_mes": gas,
+            "disponible": ing - gas,
+            "sin_asignar": True,
         })
     return jsonify(resultado)
+
 
 @app.route("/api/budget/cerrar-mes", methods=["POST"])
 def cerrar_mes():
     """
-    Guarda el saldo con el que cierras el mes como saldo real de tus cuentas.
-    Así el mes siguiente arranca desde ahí en vez de volver al valor viejo.
-    Lo haces tú a propósito (no automático) para que nunca se reste dos veces.
+    Guarda el saldo con el que cierras el mes como saldo real de CADA cuenta.
+    Manual a propósito: así nunca se resta dos veces.
     """
     data = request.get_json(force=True) or {}
     mes = data.get("mes") or datetime.now().strftime("%Y-%m")
 
-    saldos = q("SELECT moneda, SUM(monto) as total FROM ahorros GROUP BY moneda")
-    saldo_map = {x["moneda"]: x["total"] for x in saldos}
-    flujo = q("""
-        SELECT c.moneda, t.tipo, COALESCE(SUM(t.monto),0) as total
+    movs = q("""
+        SELECT t.cuenta_id, t.tipo, COALESCE(SUM(t.monto),0) as total
         FROM transacciones t JOIN categorias c ON t.categoria_id=c.id
-        WHERE t.fecha LIKE ? AND COALESCE(t.afecta_cash, 1) = 1
-        GROUP BY c.moneda, t.tipo
+        WHERE t.fecha LIKE ? AND COALESCE(t.afecta_cash, 1) = 1 AND t.cuenta_id IS NOT NULL
+        GROUP BY t.cuenta_id, t.tipo
     """, (f"{mes}%",))
 
     actualizados = []
-    for mon, saldo in saldo_map.items():
-        if not mon: continue
-        ing = sum(x["total"] for x in flujo if x["moneda"]==mon and x["tipo"]=="ingreso")
-        gas = sum(x["total"] for x in flujo if x["moneda"]==mon and x["tipo"]=="gasto")
-        nuevo = saldo + ing - gas
-        if abs(nuevo - saldo) < 0.01: continue
-        # Reparte el nuevo saldo entre las cuentas de esa moneda, proporcional
-        cuentas = q("SELECT id, monto FROM ahorros WHERE moneda=?", (mon,))
-        total_old = sum(c["monto"] for c in cuentas) or 1
-        for c in cuentas:
-            ex("UPDATE ahorros SET monto=? WHERE id=?", (nuevo * (c["monto"]/total_old), c["id"]))
-        actualizados.append({"moneda": mon, "antes": saldo, "ahora": nuevo})
+    for c in q("SELECT id, descripcion, monto, moneda FROM ahorros"):
+        ing = sum(m["total"] for m in movs if m["cuenta_id"] == c["id"] and m["tipo"] == "ingreso")
+        gas = sum(m["total"] for m in movs if m["cuenta_id"] == c["id"] and m["tipo"] == "gasto")
+        nuevo = c["monto"] + ing - gas
+        if abs(nuevo - c["monto"]) < 0.01:
+            continue
+        ex("UPDATE ahorros SET monto=?, fecha_actualizacion=? WHERE id=?",
+           (nuevo, date.today().isoformat(), c["id"]))
+        actualizados.append({"cuenta": c["descripcion"], "moneda": c["moneda"],
+                             "antes": c["monto"], "ahora": nuevo})
     return jsonify({"ok": True, "mes": mes, "actualizados": actualizados})
 
 
@@ -358,8 +387,10 @@ def add_tx():
     r = q("SELECT id FROM categorias WHERE nombre=?", (cat,))
     if not r: ex("INSERT INTO categorias(nombre,tipo) VALUES(?,?)", (cat, tipo))
     cid = q("SELECT id FROM categorias WHERE nombre=?", (cat,))[0]["id"]
-    ex("INSERT INTO transacciones(fecha,categoria_id,monto,descripcion,tipo) VALUES(?,?,?,?,?)",
-       (d.get("fecha",date.today().isoformat()), cid, float(d["monto"]), d.get("descripcion",""), tipo))
+    cuenta = d.get("cuenta_id")
+    cuenta = int(cuenta) if cuenta not in (None, "", "null") else None
+    ex("INSERT INTO transacciones(fecha,categoria_id,monto,descripcion,tipo,cuenta_id) VALUES(?,?,?,?,?,?)",
+       (d.get("fecha",date.today().isoformat()), cid, float(d["monto"]), d.get("descripcion",""), tipo, cuenta))
     return jsonify({"ok": True})
 
 @app.route("/api/categorias")
@@ -944,6 +975,7 @@ input[type="date"]::-webkit-calendar-picker-indicator{opacity:.55;cursor:pointer
   </div>
   <div class="quick-add">
     <select id="qa-cat" style="flex:1.5"></select>
+    <select id="qa-cuenta" style="flex:1.2"></select>
     <input id="qa-monto" type="text" inputmode="decimal" data-money placeholder="Monto gastado">
     <input id="qa-desc" placeholder="Descripción (opcional)">
     <input id="qa-fecha" type="date" style="flex:0 1 150px;min-width:0">
@@ -1475,11 +1507,13 @@ async function loadBudget(){
     const pctGastado = c.gastos_mes && base > 0
       ? Math.min(100, Math.round(c.gastos_mes / base * 100)) : 0;
     const barCls = pctGastado < 50 ? 'bar-green' : pctGastado < 80 ? 'bar-amber' : 'bar-red';
-    return `<div class="cash-card ${cls}">
-      <div class="cash-moneda">💵 Efectivo ${c.moneda}</div>
+    return `<div class="cash-card ${cls}" ${c.sin_asignar?'style="opacity:.75"':''}>
+      <div class="cash-moneda">${c.sin_asignar?'⚠️':'💳'} ${c.nombre} · ${c.moneda}</div>
       <div class="cash-disponible">${fmtM(c.disponible, c.moneda)}</div>
       <div class="cash-rows">
-        <div class="cash-row"><span class="cash-row-lbl">Saldo en cuentas</span><span class="cash-row-val base">${fmtM(c.saldo_ahorros, c.moneda)}</span></div>
+        ${c.sin_asignar
+          ? `<div class="cash-row"><span class="cash-row-lbl">Gastos antiguos sin cuenta</span></div>`
+          : `<div class="cash-row"><span class="cash-row-lbl">Saldo de la cuenta</span><span class="cash-row-val base">${fmtM(c.saldo_ahorros, c.moneda)}</span></div>`}
         ${c.ingresos_mes>0?`<div class="cash-row"><span class="cash-row-lbl">+ Ingresos del mes</span><span class="cash-row-val in">+${fmtM(c.ingresos_mes,c.moneda)}</span></div>`:''}
         ${c.gastos_mes>0?`
         <div class="cash-row"><span class="cash-row-lbl">− Gastado en el mes</span><span class="cash-row-val out">−${fmtM(c.gastos_mes,c.moneda)}</span></div>
@@ -1488,6 +1522,12 @@ async function loadBudget(){
       </div>
     </div>`;
   }).join('') : '';
+
+  // Selector de cuenta del gasto rápido
+  const selC=$('qa-cuenta'), prev=selC.value;
+  selC.innerHTML='<option value="">¿De qué cuenta?</option>'+
+    cash.filter(c=>!c.sin_asignar).map(c=>`<option value="${c.cuenta_id}">${c.nombre} (${c.moneda})</option>`).join('');
+  if(prev) selC.value=prev;
 
   const hayMovimientos = cash.some(c=>(c.ingresos_mes||0)+(c.gastos_mes||0) > 0);
   $('btn-cerrar').style.display = hayMovimientos ? 'block' : 'none';
@@ -1567,9 +1607,11 @@ async function delTx(id){
 async function addGasto(){
   const d={
     categoria:$('qa-cat').value, monto:parseMoney($('qa-monto').value),
-    descripcion:$('qa-desc').value, fecha:$('qa-fecha').value, tipo:'gasto'
+    descripcion:$('qa-desc').value, fecha:$('qa-fecha').value, tipo:'gasto',
+    cuenta_id: $('qa-cuenta').value || null
   };
   if(!d.monto){alert('Ingresa un monto');return;}
+  if(!d.cuenta_id){alert('Elige de qué cuenta sale el gasto');return;}
   await fetch('/api/transacciones/agregar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});
   $('qa-monto').value='';$('qa-desc').value='';
   loadBudget();
@@ -2060,7 +2102,7 @@ MANIFEST = {
     ],
 }
 
-SW_JS = """const CACHE='cfo-v4';
+SW_JS = """const CACHE='cfo-v5';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{
