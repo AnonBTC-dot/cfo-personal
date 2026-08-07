@@ -1692,8 +1692,13 @@ async function loadBudget(){
     <div id="tx-${r.id}">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--border2);gap:8px">
         <div style="flex:1;min-width:0">
-          <div style="font-size:13px;font-weight:500">${r.categoria}</div>
-          <div style="font-size:11px;color:var(--text3)">${r.fecha}${r.cuenta_nombre?' · '+r.cuenta_nombre:' · <span style="color:var(--amber)">sin cuenta</span>'}${r.descripcion?' · '+r.descripcion:''}</div>
+          <div style="font-size:13px;font-weight:500;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            <span>${r.categoria}</span>
+            ${r.cuenta_nombre
+              ? `<span class="badge badge-accent">${r.cuenta_nombre}</span>`
+              : `<span class="badge" style="background:var(--amber-bg);color:var(--amber)">sin cuenta</span>`}
+          </div>
+          <div style="font-size:11px;color:var(--text3)">${r.fecha}${r.descripcion?' · '+r.descripcion:''}</div>
         </div>
         <div style="font-size:13px;font-weight:600;color:${r.tipo==='ingreso'?'var(--green)':'var(--text)'};white-space:nowrap">
           ${r.tipo==='ingreso'?'+':'−'}${fmt(r.monto)}
@@ -2257,7 +2262,7 @@ MANIFEST = {
     ],
 }
 
-SW_JS = """const CACHE='cfo-v8';
+SW_JS = """const CACHE='cfo-v9';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{
