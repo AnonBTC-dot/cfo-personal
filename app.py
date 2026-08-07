@@ -371,14 +371,52 @@ def limpiar_mes():
 @app.route("/api/budget/recientes")
 def budget_recientes():
     mes = request.args.get("mes", datetime.now().strftime("%Y-%m"))
-    return jsonify(q("""SELECT t.id,t.fecha,t.monto,t.descripcion,t.tipo,c.nombre as categoria
-        FROM transacciones t JOIN categorias c ON t.categoria_id=c.id
-        WHERE t.fecha LIKE ? ORDER BY t.fecha DESC, t.id DESC LIMIT 30""", (f"{mes}%",)))
+    return jsonify(q("""SELECT t.id,t.fecha,t.monto,t.descripcion,t.tipo,t.cuenta_id,
+        t.categoria_id, c.nombre as categoria, c.moneda,
+        a.descripcion as cuenta_nombre
+        FROM transacciones t
+        JOIN categorias c ON t.categoria_id=c.id
+        LEFT JOIN ahorros a ON a.id=t.cuenta_id
+        WHERE t.fecha LIKE ? ORDER BY t.fecha DESC, t.id DESC LIMIT 60""", (f"{mes}%",)))
 
 @app.route("/api/transacciones/eliminar", methods=["POST"])
 def del_tx():
     ex("DELETE FROM transacciones WHERE id=?", (request.json["id"],))
     return jsonify({"ok": True})
+
+@app.route("/api/transacciones/editar", methods=["POST"])
+def edit_tx():
+    """Edita un movimiento ya guardado: fecha, monto, categoría, cuenta y nota."""
+    d = request.json
+    tid = int(d["id"])
+    campos, valores = [], []
+
+    if d.get("categoria"):
+        cat = d["categoria"]
+        r = q("SELECT id FROM categorias WHERE nombre=?", (cat,))
+        if not r:
+            ex("INSERT INTO categorias(nombre,tipo) VALUES(?,?)", (cat, d.get("tipo", "gasto")))
+            r = q("SELECT id FROM categorias WHERE nombre=?", (cat,))
+        campos.append("categoria_id=?"); valores.append(r[0]["id"])
+
+    if d.get("fecha"):
+        campos.append("fecha=?"); valores.append(d["fecha"])
+    if d.get("monto") not in (None, ""):
+        campos.append("monto=?"); valores.append(float(d["monto"]))
+    if "descripcion" in d:
+        campos.append("descripcion=?"); valores.append(d.get("descripcion", ""))
+    if d.get("tipo"):
+        campos.append("tipo=?"); valores.append(d["tipo"])
+    if "cuenta_id" in d:
+        cta = d.get("cuenta_id")
+        campos.append("cuenta_id=?")
+        valores.append(int(cta) if cta not in (None, "", "null") else None)
+
+    if campos:
+        valores.append(tid)
+        ex(f"UPDATE transacciones SET {', '.join(campos)} WHERE id=?", tuple(valores))
+    return jsonify({"ok": True})
+
 
 @app.route("/api/transacciones/agregar", methods=["POST"])
 def add_tx():
@@ -1581,21 +1619,74 @@ async function loadBudget(){
   }).join('') : '<p style="color:var(--text3);font-size:13px">Sin categorías. Agrega una abajo.</p>';
 
   // Recientes
+  // Guardamos los movimientos para poder precargar el formulario de edición
+  TX_CACHE = {}; for(const r of rec) TX_CACHE[r.id] = r;
+  CUENTAS_CACHE = cash.filter(c=>!c.sin_asignar);
+  CATS_CACHE = cats;
+
   $('budget-recientes').innerHTML = rec.length ? `<div style="display:flex;flex-direction:column;gap:2px">`+rec.map(r=>`
-    <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--border2);gap:8px">
-      <div style="flex:1;min-width:0">
-        <div style="font-size:13px;font-weight:500">${r.categoria}</div>
-        <div style="font-size:11px;color:var(--text3)">${r.fecha}${r.descripcion?' · '+r.descripcion:''}</div>
+    <div id="tx-${r.id}">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--border2);gap:8px">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:500">${r.categoria}</div>
+          <div style="font-size:11px;color:var(--text3)">${r.fecha}${r.cuenta_nombre?' · '+r.cuenta_nombre:' · <span style="color:var(--amber)">sin cuenta</span>'}${r.descripcion?' · '+r.descripcion:''}</div>
+        </div>
+        <div style="font-size:13px;font-weight:600;color:${r.tipo==='ingreso'?'var(--green)':'var(--text)'};white-space:nowrap">
+          ${r.tipo==='ingreso'?'+':'−'}${fmt(r.monto)}
+        </div>
+        <button onclick="editTx(${r.id})" title="Editar"
+          style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:13px;padding:2px 4px;border-radius:5px;flex-shrink:0"
+          onmouseover="this.style.color='var(--accent)';this.style.background='var(--accent-bg)'"
+          onmouseout="this.style.color='var(--text3)';this.style.background='none'">✎</button>
+        <button onclick="delTx(${r.id})" title="Eliminar"
+          style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:14px;padding:2px 4px;border-radius:5px;flex-shrink:0"
+          onmouseover="this.style.color='var(--red)';this.style.background='var(--red-bg)'"
+          onmouseout="this.style.color='var(--text3)';this.style.background='none'">✕</button>
       </div>
-      <div style="font-size:13px;font-weight:600;color:${r.tipo==='ingreso'?'var(--green)':'var(--text)'};white-space:nowrap">
-        ${r.tipo==='ingreso'?'+':'−'}${fmt(r.monto)}
-      </div>
-      <button onclick="delTx(${r.id})" title="Eliminar"
-        style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:14px;padding:2px 4px;border-radius:5px;flex-shrink:0"
-        onmouseover="this.style.color='var(--red)';this.style.background='var(--red-bg)'"
-        onmouseout="this.style.color='var(--text3)';this.style.background='none'">✕</button>
-    </div>`).join('')+'</div>'
+      <div id="txedit-${r.id}" class="cat-edit-form"></div>
+    </div>`).join('')+'</div>' 
   : '<p style="color:var(--text3);font-size:13px">Sin transacciones este mes</p>';
+}
+
+let TX_CACHE = {}, CUENTAS_CACHE = [], CATS_CACHE = [];
+
+function editTx(id){
+  const box = $('txedit-'+id);
+  if(box.style.display === 'block'){ box.style.display='none'; return; }
+  const r = TX_CACHE[id]; if(!r) return;
+  const cats = CATS_CACHE.filter(c=>c.tipo===r.tipo||c.tipo==='gasto');
+  box.innerHTML = `
+    <div class="form-row" style="gap:8px">
+      <div class="f-group"><label>Fecha</label>
+        <input id="tx-f-${id}" type="date" value="${r.fecha}"></div>
+      <div class="f-group"><label>Monto</label>
+        <input id="tx-m-${id}" type="text" inputmode="decimal" data-money value="${Number(r.monto).toLocaleString('en-US',{maximumFractionDigits:2})}"></div>
+      <div class="f-group"><label>Categoría</label>
+        <select id="tx-c-${id}">${cats.map(c=>`<option value="${c.nombre}" ${c.nombre===r.categoria?'selected':''}>${c.nombre}</option>`).join('')}</select></div>
+      <div class="f-group"><label>¿De qué cuenta?</label>
+        <select id="tx-a-${id}"><option value="">Sin asignar</option>${CUENTAS_CACHE.map(c=>`<option value="${c.cuenta_id}" ${c.cuenta_id===r.cuenta_id?'selected':''}>${c.nombre} (${c.moneda})</option>`).join('')}</select></div>
+      <div class="f-group" style="flex:1 1 100%"><label>Descripción</label>
+        <input id="tx-d-${id}" value="${(r.descripcion||'').replace(/"/g,'&quot;')}" placeholder="opcional"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn btn-primary btn-sm" onclick="guardarTx(${id})">Guardar</button>
+      <button class="btn btn-outline btn-sm" onclick="editTx(${id})">Cancelar</button>
+    </div>`;
+  box.style.display = 'block';
+}
+
+async function guardarTx(id){
+  const d = {
+    id,
+    fecha: $('tx-f-'+id).value,
+    monto: parseMoney($('tx-m-'+id).value),
+    categoria: $('tx-c-'+id).value,
+    cuenta_id: $('tx-a-'+id).value || null,
+    descripcion: $('tx-d-'+id).value
+  };
+  if(!d.monto){ alert('El monto no puede ser 0'); return; }
+  await fetch('/api/transacciones/editar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});
+  loadBudget(); loadAhorros(); loadHome();
 }
 
 async function delTx(id){
@@ -2102,7 +2193,7 @@ MANIFEST = {
     ],
 }
 
-SW_JS = """const CACHE='cfo-v5';
+SW_JS = """const CACHE='cfo-v6';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{
