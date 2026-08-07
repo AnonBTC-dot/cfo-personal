@@ -16,41 +16,74 @@ if DATABASE_URL:
     import psycopg2
     import psycopg2.extras
 
+    ES_POSTGRES = True
+
     def _conn():
         return psycopg2.connect(DATABASE_URL)
 
     def q(sql, p=()):
         sql = sql.replace("?", "%s")
-        c = _conn(); cur = c.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute(sql, p); r = cur.fetchall(); c.close()
-        return [dict(x) for x in r]
+        c = _conn()
+        try:
+            cur = c.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute(sql, p)
+            return [dict(x) for x in cur.fetchall()]
+        finally:
+            c.close()  # SIEMPRE, aunque la consulta falle: si no, se agota el pool
 
     def ex(sql, p=()):
         sql = sql.replace("?", "%s")
-        # ON CONFLICT syntax already PostgreSQL-compatible
-        sql = sql.replace("OR IGNORE INTO", "INTO").replace(
-            "INSERT OR IGNORE", "INSERT"
-        )
-        c = _conn(); cur = c.cursor(); cur.execute(sql, p); c.commit(); c.close()
+        sql = sql.replace("OR IGNORE INTO", "INTO").replace("INSERT OR IGNORE", "INSERT")
+        c = _conn()
+        try:
+            cur = c.cursor()
+            cur.execute(sql, p)
+            c.commit()
+        finally:
+            c.close()
+
+    def _tiene_columna(tabla, col):
+        r = q("""SELECT 1 FROM information_schema.columns
+                 WHERE table_name=? AND column_name=?""", (tabla, col))
+        return bool(r)
 
 else:
     import sqlite3
     DB = os.environ.get("CFO_DB_PATH", str(Path.home() / "cfo/cfo.db"))
 
+    ES_POSTGRES = False
+
     def q(sql, p=()):
-        c = sqlite3.connect(DB); c.row_factory = sqlite3.Row
-        r = c.execute(sql, p).fetchall(); c.close()
-        return [dict(x) for x in r]
+        c = sqlite3.connect(DB)
+        try:
+            c.row_factory = sqlite3.Row
+            return [dict(x) for x in c.execute(sql, p).fetchall()]
+        finally:
+            c.close()
 
     def ex(sql, p=()):
-        c = sqlite3.connect(DB); c.execute(sql, p); c.commit(); c.close()
+        c = sqlite3.connect(DB)
+        try:
+            c.execute(sql, p)
+            c.commit()
+        finally:
+            c.close()
+
+    def _tiene_columna(tabla, col):
+        return any(r["name"] == col for r in q(f"PRAGMA table_info({tabla})"))
 
 def _migrar():
-    """Añade transacciones.cuenta_id si falta. Idempotente en SQLite y Postgres."""
+    """
+    Añade transacciones.cuenta_id si falta.
+    Se comprueba primero: lanzar un ALTER que falla en cada arranque dejaba
+    conexiones colgadas y acababa tumbando la app en Postgres.
+    """
     try:
-        ex("ALTER TABLE transacciones ADD COLUMN cuenta_id INTEGER")
-    except Exception:
-        pass  # ya existe
+        if not _tiene_columna("transacciones", "cuenta_id"):
+            ex("ALTER TABLE transacciones ADD COLUMN cuenta_id INTEGER")
+            print("[migración] transacciones.cuenta_id creada")
+    except Exception as e:
+        print(f"[migración] no se pudo verificar/crear cuenta_id: {e}")
 
 _migrar()
 
@@ -279,6 +312,18 @@ def budget_cash():
 
     cuentas = q("SELECT id, descripcion, monto, moneda, cuenta FROM ahorros ORDER BY moneda, cuenta, descripcion")
 
+    if not _tiene_columna("transacciones", "cuenta_id"):
+        # Sin columna: no podemos saber de qué cuenta salió cada gasto todavía
+        return jsonify([{
+            "cuenta_id": c["id"],
+            "nombre": (c.get("cuenta") or "").strip() or c["descripcion"],
+            "descripcion": c["descripcion"],
+            "moneda": c["moneda"],
+            "saldo_ahorros": c["monto"],
+            "ingresos_mes": 0, "gastos_mes": 0,
+            "disponible": c["monto"],
+        } for c in cuentas])
+
     # Movimientos del mes con la cuenta a la que se cargaron
     movs = q("""
         SELECT t.cuenta_id, c.moneda, t.tipo, COALESCE(SUM(t.monto),0) as total
@@ -339,6 +384,8 @@ def cerrar_mes():
     data = request.get_json(force=True) or {}
     mes = data.get("mes") or datetime.now().strftime("%Y-%m")
 
+    if not _tiene_columna("transacciones", "cuenta_id"):
+        return jsonify({"ok": False, "error": "Falta la columna cuenta_id"}), 400
     movs = q("""
         SELECT t.cuenta_id, t.tipo, COALESCE(SUM(t.monto),0) as total
         FROM transacciones t JOIN categorias c ON t.categoria_id=c.id
@@ -374,9 +421,16 @@ def limpiar_mes():
 @app.route("/api/budget/recientes")
 def budget_recientes():
     mes = request.args.get("mes", datetime.now().strftime("%Y-%m"))
+    if not _tiene_columna("transacciones", "cuenta_id"):
+        # Sin la columna todavía: devolvemos lo básico en vez de reventar
+        return jsonify(q("""SELECT t.id,t.fecha,t.monto,t.descripcion,t.tipo,
+            t.categoria_id, c.nombre as categoria, c.moneda,
+            NULL as cuenta_id, NULL as cuenta_nombre
+            FROM transacciones t JOIN categorias c ON t.categoria_id=c.id
+            WHERE t.fecha LIKE ? ORDER BY t.fecha DESC, t.id DESC LIMIT 60""", (f"{mes}%",)))
     return jsonify(q("""SELECT t.id,t.fecha,t.monto,t.descripcion,t.tipo,t.cuenta_id,
         t.categoria_id, c.nombre as categoria, c.moneda,
-        a.descripcion as cuenta_nombre
+        COALESCE(NULLIF(TRIM(a.cuenta),''), a.descripcion) as cuenta_nombre
         FROM transacciones t
         JOIN categorias c ON t.categoria_id=c.id
         LEFT JOIN ahorros a ON a.id=t.cuenta_id
@@ -410,7 +464,7 @@ def edit_tx():
         campos.append("descripcion=?"); valores.append(d.get("descripcion", ""))
     if d.get("tipo"):
         campos.append("tipo=?"); valores.append(d["tipo"])
-    if "cuenta_id" in d:
+    if "cuenta_id" in d and _tiene_columna("transacciones", "cuenta_id"):
         cta = d.get("cuenta_id")
         campos.append("cuenta_id=?")
         valores.append(int(cta) if cta not in (None, "", "null") else None)
@@ -430,8 +484,12 @@ def add_tx():
     cid = q("SELECT id FROM categorias WHERE nombre=?", (cat,))[0]["id"]
     cuenta = d.get("cuenta_id")
     cuenta = int(cuenta) if cuenta not in (None, "", "null") else None
-    ex("INSERT INTO transacciones(fecha,categoria_id,monto,descripcion,tipo,cuenta_id) VALUES(?,?,?,?,?,?)",
-       (d.get("fecha",date.today().isoformat()), cid, float(d["monto"]), d.get("descripcion",""), tipo, cuenta))
+    if _tiene_columna("transacciones", "cuenta_id"):
+        ex("INSERT INTO transacciones(fecha,categoria_id,monto,descripcion,tipo,cuenta_id) VALUES(?,?,?,?,?,?)",
+           (d.get("fecha",date.today().isoformat()), cid, float(d["monto"]), d.get("descripcion",""), tipo, cuenta))
+    else:
+        ex("INSERT INTO transacciones(fecha,categoria_id,monto,descripcion,tipo) VALUES(?,?,?,?,?)",
+           (d.get("fecha",date.today().isoformat()), cid, float(d["monto"]), d.get("descripcion",""), tipo))
     return jsonify({"ok": True})
 
 @app.route("/api/categorias")
@@ -2199,7 +2257,7 @@ MANIFEST = {
     ],
 }
 
-SW_JS = """const CACHE='cfo-v7';
+SW_JS = """const CACHE='cfo-v8';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{
