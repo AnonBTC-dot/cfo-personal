@@ -150,6 +150,7 @@ def networth():
         "cash_cop": round(cash_cop, 2),
         "deudas": deudas,
         "tasa_cop": tasa,
+        "tasa_pyg": tasa_pyg,
         "activos": activos,
     })
 
@@ -1370,11 +1371,18 @@ async function loadHome(){
 
   // Cash breakdown
   const tasa=nw.tasa_cop;
-  const ahData=await fetch('/api/ahorros').then(r=>r.json());
-  const cashTotalUSD=nw.cash_usd+(nw.cash_cop/tasa);
-  // Ajustar cada entrada con el flujo del mes (mismo criterio que la tarjeta Efectivo COP/USD)
-  const rawT={};ahData.forEach(a=>rawT[a.moneda]=(rawT[a.moneda]||0)+a.monto);
-  const adjHome=a=>{const t=rawT[a.moneda]||0;const nwT=a.moneda==='COP'?nw.cash_cop:nw.cash_usd;return t?a.monto*(nwT/t):a.monto;};
+  const [ahData, cashHome] = await Promise.all([
+    fetch('/api/ahorros').then(r=>r.json()),
+    fetch('/api/budget/cash?mes='+MES).then(r=>r.json())
+  ]);
+  // Mismo criterio que Budget y Ahorros: el disponible real de cada cuenta.
+  const porCuentaHome = {};
+  for(const c of cashHome){ if(c.cuenta_id != null) porCuentaHome[c.cuenta_id] = c.disponible; }
+  const adjHome = a => (porCuentaHome[a.id] !== undefined ? porCuentaHome[a.id] : a.monto);
+  const cashTotalUSD = ahData.reduce((t,a)=>{
+    const v = adjHome(a);
+    return t + (a.moneda==='COP' ? v/tasa : a.moneda==='PYG' ? v/(nw.tasa_pyg||7300) : v);
+  }, 0);
   $('home-cash').innerHTML=`
     <div style="display:flex;flex-direction:column;gap:10px;padding:4px 0">
       ${ahData.map(a=>{const disp=adjHome(a);return `
@@ -1817,24 +1825,13 @@ async function loadAhorros(){
   ]);
   const tasa=parseFloat(cfg.tasa_cop_usd||4050);
 
-  // Ajuste = movimientos DEL MES que estás viendo. Cada mes es independiente:
-  // el saldo de `ahorros` es lo que tienes hoy en las cuentas, así que sumarle
-  // meses anteriores restaría dos veces lo que ya está descontado.
-  const adj={};
-  for(const c of cashData){
-    adj[c.moneda] = (c.ingresos_mes||0) - (c.gastos_mes||0);
-  }
-
-  // For display: distribute adjustment proportionally among entries of same currency
-  const rawTotals={};
-  for(const a of ah) rawTotals[a.moneda]=(rawTotals[a.moneda]||0)+a.monto;
-
-  const adjustedMonto = a => {
-    const delta = adj[a.moneda] || 0;
-    const total = rawTotals[a.moneda] || a.monto;
-    // Distribute adjustment proportionally if multiple entries of same currency
-    return a.monto + delta * (a.monto / total);
-  };
+  // El disponible de CADA cuenta lo calcula el backend (saldo + movimientos que
+  // se cargaron a esa cuenta). Antes aquí se repartía el gasto del mes de forma
+  // proporcional entre todas las cuentas de la misma moneda, y por eso Ahorros
+  // y Budget mostraban cifras distintas para la misma cuenta.
+  const porCuenta = {};
+  for(const c of cashData){ if(c.cuenta_id != null) porCuenta[c.cuenta_id] = c.disponible; }
+  const adjustedMonto = a => (porCuenta[a.id] !== undefined ? porCuenta[a.id] : a.monto);
 
   $('ahorros-list').innerHTML=ah.length?ah.map(a=>{
     const disp=adjustedMonto(a);
@@ -2262,7 +2259,7 @@ MANIFEST = {
     ],
 }
 
-SW_JS = """const CACHE='cfo-v9';
+SW_JS = """const CACHE='cfo-v10';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{
