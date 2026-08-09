@@ -1859,16 +1859,25 @@ async function loadAhorros(){
   }).join('')
   :'<p style="color:var(--text3);font-size:13px">Sin efectivo registrado</p>';
 
-  // Total = sum of adjusted amounts (matches Budget disponible)
-  const totalUSD=ah.filter(a=>a.moneda==='USD').reduce((s,a)=>s+adjustedMonto(a),0);
-  const totalCOP=ah.filter(a=>a.moneda==='COP').reduce((s,a)=>s+adjustedMonto(a),0);
+  // Total por moneda: genérico, así entra cualquier divisa (antes solo USD y COP,
+  // por eso los guaraníes no sumaban al total).
+  const tasaPYG = parseFloat(cfg.tasa_pyg_usd || 7300);
+  const aUSD = (v, mon) => mon === 'COP' ? v / tasa : mon === 'PYG' ? v / tasaPYG : v;
+
+  const porMoneda = {};
+  for (const a of ah) porMoneda[a.moneda] = (porMoneda[a.moneda] || 0) + adjustedMonto(a);
+  const totalUSD = Object.entries(porMoneda).reduce((s, [mon, v]) => s + aUSD(v, mon), 0);
+  const detalle = Object.entries(porMoneda)
+    .filter(([, v]) => v !== 0)
+    .map(([mon, v]) => fmtM(v, mon))
+    .join('  +  ');
 
   $('ahorros-total').innerHTML=`
     <div style="display:flex;justify-content:space-between;align-items:center">
       <span style="font-size:12px;font-weight:600;color:var(--text2)">Disponible este mes</span>
-      <span style="font-size:16px;font-weight:800;color:var(--blue)">${fmt(totalUSD+(totalCOP/tasa))}</span>
+      <span style="font-size:16px;font-weight:800;color:var(--blue)">${fmt(totalUSD)}</span>
     </div>
-    ${totalCOP>0||totalUSD>0?`<div style="font-size:11px;color:var(--text3);text-align:right;margin-top:2px">${fmt(totalUSD)} USD + ${fmtCOP(totalCOP)} COP</div>`:''}`;
+    ${detalle?`<div style="font-size:11px;color:var(--text3);text-align:right;margin-top:2px">${detalle}</div>`:''}`;
 
   // Preservar qué tablas/meses estaban abiertos antes de re-renderizar
   const openDet=[...document.querySelectorAll('#metas-list details[open]')].map(d=>d.id);
@@ -2269,7 +2278,7 @@ MANIFEST = {
     ],
 }
 
-SW_JS = """const CACHE='cfo-v11';
+SW_JS = """const CACHE='cfo-v12';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{
