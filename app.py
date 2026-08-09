@@ -125,6 +125,7 @@ def networth():
 
     cash_usd = q("SELECT COALESCE(SUM(monto),0) as t FROM ahorros WHERE moneda='USD'")[0]["t"]
     cash_cop = q("SELECT COALESCE(SUM(monto),0) as t FROM ahorros WHERE moneda='COP'")[0]["t"]
+    cash_pyg = q("SELECT COALESCE(SUM(monto),0) as t FROM ahorros WHERE moneda='PYG'")[0]["t"]
     deudas = q("SELECT COALESCE(SUM(monto),0) as t FROM deudas WHERE moneda='USD'")[0]["t"]
 
     # Adjust cash with current month gasto/ingreso only — identical logic to budget/cash
@@ -139,15 +140,18 @@ def networth():
             cash_cop += total if tipo == "ingreso" else -total
         elif mon == "USD":
             cash_usd += total if tipo == "ingreso" else -total
+        elif mon == "PYG":
+            cash_pyg += total if tipo == "ingreso" else -total
 
     inv_total = sum(a["valor_actual"] or a["costo_base"] for a in activos)
-    nw = inv_total + cash_usd + (cash_cop / tasa) - deudas
+    nw = inv_total + cash_usd + (cash_cop / tasa) + (cash_pyg / tasa_pyg) - deudas
 
     return jsonify({
         "net_worth": round(nw, 2),
         "inv_total": round(inv_total, 2),
         "cash_usd": round(cash_usd, 2),
         "cash_cop": round(cash_cop, 2),
+        "cash_pyg": round(cash_pyg, 2),
         "deudas": deudas,
         "tasa_cop": tasa,
         "tasa_pyg": tasa_pyg,
@@ -1386,13 +1390,14 @@ async function loadHome(){
   $('home-cash').innerHTML=`
     <div style="display:flex;flex-direction:column;gap:10px;padding:4px 0">
       ${ahData.map(a=>{const disp=adjHome(a);return `
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;background:${a.moneda==='USD'?'var(--blue-bg)':'var(--green-bg)'};border-radius:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;background:${a.moneda==='USD'?'var(--blue-bg)':a.moneda==='PYG'?'var(--amber-bg)':'var(--green-bg)'};border-radius:10px">
           <div>
             <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px">${a.cuenta||a.descripcion}</div>
-            <div style="font-size:20px;font-weight:700;color:${a.moneda==='USD'?'var(--blue)':'var(--green)'}">${a.moneda==='COP'?fmtCOP(disp)+' COP':fmt(disp)}</div>
+            <div style="font-size:20px;font-weight:700;color:${a.moneda==='USD'?'var(--blue)':a.moneda==='PYG'?'var(--amber)':'var(--green)'}">${fmtM(disp, a.moneda)}</div>
             ${a.moneda==='COP'?`<div style="font-size:11px;color:var(--text3)">≈ ${fmt(disp/tasa)} USD</div>`:''}
+            ${a.moneda==='PYG'?`<div style="font-size:11px;color:var(--text3)">≈ ${fmt(disp/(nw.tasa_pyg||7300))} USD</div>`:''}
           </div>
-          <div style="font-size:26px">${a.moneda==='USD'?'💵':'💰'}</div>
+          <div style="font-size:26px">${a.moneda==='USD'?'💵':a.moneda==='PYG'?'🇵🇾':'💰'}</div>
         </div>`;}).join('')}
       <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:var(--surface2);border-radius:10px;border:1px solid var(--border)">
         <div style="font-size:12px;font-weight:600;color:var(--text2)">Liquidez total (equiv. USD)</div>
@@ -1582,8 +1587,13 @@ async function addInv(){
 const MONEDA_SYM = {USD:'$',COP:'$',PYG:'₲',EUR:'€',ARS:'$'};
 const MONEDA_CLS = {USD:'usd',COP:'cop',PYG:'pyg',EUR:'eur'};
 function fmtM(n,mon){
-  const s=MONEDA_SYM[mon]||'';
-  return s+Number(n).toLocaleString('en-US',{maximumFractionDigits:0});
+  const sym = MONEDA_SYM[mon] || '';
+  // Guaraníes y pesos se escriben con punto de miles; dólares con coma
+  const loc = (mon === 'PYG' || mon === 'COP') ? 'es-CO' : 'en-US';
+  const txt = sym + Number(n).toLocaleString(loc, {maximumFractionDigits: 0});
+  // '$' lo comparten USD, COP y ARS: añadimos el código para no confundirlos.
+  // '₲' y '€' son inequívocos, así que van solos.
+  return (sym === '$' && mon !== 'USD') ? `${txt} ${mon}` : txt;
 }
 
 async function limpiarMes(){
@@ -1841,7 +1851,7 @@ async function loadAhorros(){
         ${a.cuenta&&a.cuenta!==a.descripcion?`<div style="font-size:11px;color:var(--text3)">${a.descripcion}</div>`:''}
       </div>
       <div style="display:flex;align-items:center;gap:6px">
-        <div class="ahorro-val">${a.moneda==='COP'?fmtCOP(disp)+' COP':fmt(disp)}</div>
+        <div class="ahorro-val">${fmtM(disp, a.moneda)}</div>
         <button class="btn btn-outline btn-sm" title="Editar" onclick="editAhorro(${a.id},'${(a.descripcion||'').replace(/'/g,"\\'")}','${a.monto}','${a.moneda}','${(a.cuenta||'').replace(/'/g,"\\'")}')">✏️</button>
         <button class="btn btn-outline btn-sm" title="Eliminar" onclick="delAhorro(${a.id})">✕</button>
       </div>
@@ -2259,7 +2269,7 @@ MANIFEST = {
     ],
 }
 
-SW_JS = """const CACHE='cfo-v10';
+SW_JS = """const CACHE='cfo-v11';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{
