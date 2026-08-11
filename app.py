@@ -34,6 +34,7 @@ if DATABASE_URL:
     def ex(sql, p=()):
         sql = sql.replace("?", "%s")
         sql = sql.replace("OR IGNORE INTO", "INTO").replace("INSERT OR IGNORE", "INSERT")
+        sql = sql.replace("INTEGER PRIMARY KEY", "SERIAL PRIMARY KEY")
         c = _conn()
         try:
             cur = c.cursor()
@@ -84,6 +85,24 @@ def _migrar():
             print("[migración] transacciones.cuenta_id creada")
     except Exception as e:
         print(f"[migración] no se pudo verificar/crear cuenta_id: {e}")
+
+    # Depósitos: dinero tuyo pero bloqueado (garantías de arriendo, etc.)
+    try:
+        ex("""CREATE TABLE IF NOT EXISTS depositos (
+            id INTEGER PRIMARY KEY,
+            tipo TEXT NOT NULL,
+            persona TEXT,
+            lugar TEXT,
+            monto REAL NOT NULL,
+            moneda TEXT DEFAULT 'USD',
+            fecha TEXT,
+            fecha_devolucion TEXT,
+            cuenta_id INTEGER,
+            estado TEXT DEFAULT 'bloqueado',
+            notas TEXT
+        )""")
+    except Exception as e:
+        print(f"[migración] depositos: {e}")
 
 _migrar()
 
@@ -144,7 +163,20 @@ def networth():
             cash_pyg += total if tipo == "ingreso" else -total
 
     inv_total = sum(a["valor_actual"] or a["costo_base"] for a in activos)
-    nw = inv_total + cash_usd + (cash_cop / tasa) + (cash_pyg / tasa_pyg) - deudas
+
+    # Depósitos bloqueados: siguen siendo patrimonio, pero no son líquidos.
+    # Ya están descontados del efectivo disponible, así que se suman aparte.
+    try:
+        deps = q("SELECT monto, moneda FROM depositos WHERE estado='bloqueado'")
+    except Exception:
+        deps = []
+    def _a_usd(v, mon):
+        if mon == "COP": return v / tasa
+        if mon == "PYG": return v / tasa_pyg
+        return v
+    depositos_usd = sum(_a_usd(d["monto"], d["moneda"]) for d in deps)
+
+    nw = inv_total + cash_usd + (cash_cop / tasa) + (cash_pyg / tasa_pyg) + depositos_usd - deudas
 
     return jsonify({
         "net_worth": round(nw, 2),
@@ -152,6 +184,7 @@ def networth():
         "cash_usd": round(cash_usd, 2),
         "cash_cop": round(cash_cop, 2),
         "cash_pyg": round(cash_pyg, 2),
+        "depositos": round(depositos_usd, 2),
         "deudas": deudas,
         "tasa_cop": tasa,
         "tasa_pyg": tasa_pyg,
@@ -297,6 +330,83 @@ def precios_live():
     return jsonify({"ok": True, "precios": result, "errors": errors, "actualizado": now})
 
 
+@app.route("/api/depositos")
+def listar_depositos():
+    """
+    Depósitos: plata tuya que está retenida (garantía de arriendo, etc.).
+    No es un gasto —la recuperas—, pero tampoco puedes usarla, así que se
+    descuenta de la liquidez y se cuenta aparte en el patrimonio.
+    """
+    rows = q("""SELECT d.*, COALESCE(NULLIF(TRIM(a.cuenta),''), a.descripcion) as cuenta_nombre
+                FROM depositos d LEFT JOIN ahorros a ON a.id = d.cuenta_id
+                ORDER BY d.estado, d.fecha DESC""")
+    return jsonify(rows)
+
+
+@app.route("/api/depositos/agregar", methods=["POST"])
+def crear_deposito():
+    d = request.json
+    cta = d.get("cuenta_id")
+    cta = int(cta) if cta not in (None, "", "null") else None
+    monto = float(d["monto"])
+    # El depósito sale de verdad de la cuenta: se descuenta del saldo. Sigue
+    # siendo tuyo, así que se cuenta aparte en el patrimonio (no lo pierdes).
+    if cta:
+        ex("UPDATE ahorros SET monto = monto - ?, fecha_actualizacion=? WHERE id=?",
+           (monto, date.today().isoformat(), cta))
+    ex("""INSERT INTO depositos(tipo,persona,lugar,monto,moneda,fecha,fecha_devolucion,cuenta_id,estado,notas)
+          VALUES(?,?,?,?,?,?,?,?,?,?)""",
+       (d.get("tipo","Arriendo"), d.get("persona",""), d.get("lugar",""),
+        monto, d.get("moneda","USD"),
+        d.get("fecha", date.today().isoformat()), d.get("fecha_devolucion") or None,
+        cta, "bloqueado", d.get("notas","")))
+    return jsonify({"ok": True})
+
+
+@app.route("/api/depositos/editar", methods=["POST"])
+def actualizar_deposito():
+    d = request.json
+    campos, valores = [], []
+    for c in ("tipo","persona","lugar","moneda","fecha","fecha_devolucion","estado","notas"):
+        if c in d:
+            campos.append(f"{c}=?"); valores.append(d.get(c) or None)
+    if d.get("monto") not in (None, ""):
+        campos.append("monto=?"); valores.append(float(d["monto"]))
+    if "cuenta_id" in d:
+        cta = d.get("cuenta_id")
+        campos.append("cuenta_id=?"); valores.append(int(cta) if cta not in (None,"","null") else None)
+    if campos:
+        valores.append(int(d["id"]))
+        ex(f"UPDATE depositos SET {', '.join(campos)} WHERE id=?", tuple(valores))
+    return jsonify({"ok": True})
+
+
+@app.route("/api/depositos/devolver", methods=["POST"])
+def marcar_devuelto():
+    """Marca el depósito como devuelto y devuelve el dinero a la cuenta.
+    Simétrico a registrarlo: entonces salió del saldo, ahora vuelve a entrar."""
+    d = request.json
+    dep = q("SELECT * FROM depositos WHERE id=?", (int(d["id"]),))
+    if not dep:
+        return jsonify({"ok": False, "error": "No existe"}), 404
+    dep = dep[0]
+    if dep["estado"] == "devuelto":
+        return jsonify({"ok": True, "ya": True})
+    monto = float(d.get("monto_devuelto") or dep["monto"])
+    if dep["cuenta_id"]:
+        ex("UPDATE ahorros SET monto = monto + ?, fecha_actualizacion=? WHERE id=?",
+           (monto, date.today().isoformat(), dep["cuenta_id"]))
+    ex("UPDATE depositos SET estado='devuelto', fecha_devolucion=? WHERE id=?",
+       (d.get("fecha_devolucion") or date.today().isoformat(), dep["id"]))
+    return jsonify({"ok": True, "devuelto": monto})
+
+
+@app.route("/api/depositos/eliminar", methods=["POST"])
+def borrar_deposito():
+    ex("DELETE FROM depositos WHERE id=?", (int(request.json["id"]),))
+    return jsonify({"ok": True})
+
+
 @app.route("/api/budget/mes")
 def budget_mes():
     mes = request.args.get("mes", datetime.now().strftime("%Y-%m"))
@@ -337,6 +447,15 @@ def budget_cash():
         GROUP BY t.cuenta_id, c.moneda, t.tipo
     """, (f"{mes}%",))
 
+    # Depósitos activos: dinero que sigue siendo tuyo pero está retenido
+    try:
+        bloqueado = q("""SELECT cuenta_id, COALESCE(SUM(monto),0) as total FROM depositos
+                         WHERE estado='bloqueado' AND cuenta_id IS NOT NULL
+                         GROUP BY cuenta_id""")
+    except Exception:
+        bloqueado = []
+    bloq_map = {b["cuenta_id"]: b["total"] for b in bloqueado}
+
     def suma(cuenta_id, tipo, moneda=None):
         return sum(m["total"] for m in movs
                    if m["cuenta_id"] == cuenta_id and m["tipo"] == tipo
@@ -346,6 +465,7 @@ def budget_cash():
     for c in cuentas:
         ing = suma(c["id"], "ingreso")
         gas = suma(c["id"], "gasto")
+        bloq = bloq_map.get(c["id"], 0)  # solo informativo: ya está fuera del saldo
         resultado.append({
             "cuenta_id": c["id"],
             # El nombre visible es dónde está guardado (GrabFi, Listo Global...);
@@ -356,6 +476,7 @@ def budget_cash():
             "saldo_ahorros": c["monto"],
             "ingresos_mes": ing,
             "gastos_mes": gas,
+            "bloqueado": bloq,  # informativo: cuánto tienes retenido desde aquí
             "disponible": c["monto"] + ing - gas,
         })
 
@@ -1013,6 +1134,7 @@ input[type="date"]::-webkit-calendar-picker-indicator{opacity:.55;cursor:pointer
   <button class="nav-btn" onclick="goto('inv',this)">Inversiones</button>
   <button class="nav-btn" onclick="goto('budget',this)">Budget</button>
   <button class="nav-btn" onclick="goto('ahorros',this)">Ahorros & Metas</button>
+  <button class="nav-btn" onclick="goto('depositos',this)">Depósitos</button>
   <button class="nav-btn" onclick="goto('config',this)">Ajustes</button>
 </div>
 
@@ -1119,6 +1241,46 @@ input[type="date"]::-webkit-calendar-picker-indicator{opacity:.55;cursor:pointer
 </div>
 
 <!-- ── AHORROS ── -->
+<div class="tab" id="tab-depositos">
+  <div class="cash-panel" id="dep-resumen"></div>
+
+  <div class="form-card">
+    <div class="form-title">Registrar depósito</div>
+    <div class="form-row">
+      <div class="f-group"><label>Tipo</label>
+        <select id="d-tipo">
+          <option value="Arriendo">Arriendo</option>
+          <option value="Garantía">Garantía</option>
+          <option value="Servicios">Servicios</option>
+          <option value="Adelanto">Adelanto</option>
+          <option value="Otro">Otro</option>
+        </select></div>
+      <div class="f-group"><label>Persona</label>
+        <input id="d-persona" placeholder="David Maza"></div>
+      <div class="f-group"><label>Lugar</label>
+        <input id="d-lugar" placeholder="Spirit Mariscal"></div>
+      <div class="f-group"><label>Monto</label>
+        <input id="d-monto" type="text" inputmode="decimal" data-money placeholder="2,000"></div>
+      <div class="f-group"><label>Moneda</label>
+        <select id="d-moneda"><option value="USD">USD</option><option value="PYG">PYG ₲</option><option value="COP">COP</option></select></div>
+      <div class="f-group"><label>¿De qué cuenta salió?</label>
+        <select id="d-cuenta"></select></div>
+      <div class="f-group" style="flex:0 1 150px;min-width:0"><label>Fecha</label>
+        <input id="d-fecha" type="date"></div>
+      <div class="f-group" style="flex:0 1 150px;min-width:0"><label>Devolución prevista</label>
+        <input id="d-devolucion" type="date"></div>
+      <div class="f-group" style="flex:1 1 100%"><label>Notas</label>
+        <input id="d-notas" placeholder="opcional"></div>
+    </div>
+    <div style="margin-top:12px"><button class="btn btn-primary" onclick="addDeposito()">+ Registrar depósito</button></div>
+  </div>
+
+  <div class="section-title">Depósitos activos</div>
+  <div id="dep-activos"></div>
+  <div class="section-title">Ya devueltos</div>
+  <div id="dep-devueltos"></div>
+</div>
+
 <div class="tab" id="tab-ahorros">
   <div class="grid2">
     <div class="box">
@@ -1249,7 +1411,7 @@ function goto(name,btn){
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
   $('tab-'+name).classList.add('active');
   btn.classList.add('active');
-  ({home:loadHome,inv:loadInv,budget:loadBudget,ahorros:loadAhorros,config:loadConfig})[name]?.();
+  ({home:loadHome,inv:loadInv,budget:loadBudget,ahorros:loadAhorros,depositos:loadDepositos,config:loadConfig})[name]?.();
 }
 
 // ── ONBOARDING ────────────────────────────────────────────────────────────────
@@ -1399,6 +1561,14 @@ async function loadHome(){
           </div>
           <div style="font-size:26px">${a.moneda==='USD'?'💵':a.moneda==='PYG'?'🇵🇾':'💰'}</div>
         </div>`;}).join('')}
+      ${nw.depositos>0?`<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;background:var(--amber-bg);border-radius:10px">
+        <div>
+          <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px">Depósitos bloqueados</div>
+          <div style="font-size:20px;font-weight:700;color:var(--amber)">${fmt(nw.depositos)}</div>
+          <div style="font-size:11px;color:var(--text3)">Tuyo, pero retenido</div>
+        </div>
+        <div style="font-size:26px">🔒</div>
+      </div>`:''}
       <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:var(--surface2);border-radius:10px;border:1px solid var(--border)">
         <div style="font-size:12px;font-weight:600;color:var(--text2)">Liquidez total (equiv. USD)</div>
         <div style="font-size:18px;font-weight:800;color:var(--text)">${fmt(cashTotalUSD)}</div>
@@ -1609,6 +1779,96 @@ async function cerrarMes(){
   if(!confirm(`Se guardará como saldo de tus cuentas:\\n\\n${resumen}\\n\\nLos movimientos del mes quedan registrados igual. ¿Continuar?`)) return;
   await fetch('/api/budget/cerrar-mes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mes:MES})});
   loadBudget(); loadAhorros(); loadHome();
+}
+
+/* ───────────────── DEPÓSITOS ───────────────── */
+
+async function loadDepositos(){
+  const [deps, cash, cfg] = await Promise.all([
+    fetch('/api/depositos').then(r=>r.json()),
+    fetch('/api/budget/cash?mes='+MES).then(r=>r.json()),
+    fetch('/api/config').then(r=>r.json())
+  ]);
+  const tasa = parseFloat(cfg.tasa_cop_usd||4050), tasaP = parseFloat(cfg.tasa_pyg_usd||7300);
+  const aUSD = (v,m) => m==='COP'? v/tasa : m==='PYG'? v/tasaP : v;
+
+  // Selector de cuenta
+  const sel = $('d-cuenta'), prev = sel.value;
+  sel.innerHTML = '<option value="">¿De qué cuenta?</option>' +
+    cash.filter(c=>!c.sin_asignar).map(c=>`<option value="${c.cuenta_id}">${c.nombre} (${c.moneda})</option>`).join('');
+  if(prev) sel.value = prev;
+  if(!$('d-fecha').value) $('d-fecha').value = today();
+
+  const activos = deps.filter(d=>d.estado!=='devuelto');
+  const devueltos = deps.filter(d=>d.estado==='devuelto');
+  const totalUSD = activos.reduce((t,d)=>t+aUSD(d.monto,d.moneda),0);
+
+  $('dep-resumen').innerHTML = `
+    <div class="cash-card other">
+      <div class="cash-moneda">🔒 Bloqueado ahora mismo</div>
+      <div class="cash-disponible">${fmt(totalUSD)}</div>
+      <div class="cash-rows">
+        <div class="cash-row"><span class="cash-row-lbl">${activos.length} depósito${activos.length===1?'':'s'} activo${activos.length===1?'':'s'}</span></div>
+        <div class="cash-row"><span class="cash-row-lbl">Es tuyo, pero no lo puedes usar</span></div>
+      </div>
+    </div>`;
+
+  const card = (d, esActivo) => `
+    <div class="asset-card" style="cursor:default;${esActivo?'':'opacity:.6'}">
+      <div class="asset-header">
+        <div style="min-width:0">
+          <div class="asset-name">${d.lugar||d.tipo}</div>
+          <div class="asset-qty">${d.tipo}${d.persona?' · '+d.persona:''}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:18px;font-weight:800">${fmtM(d.monto, d.moneda)}</div>
+          <div style="font-size:11px;color:var(--text3)">${d.cuenta_nombre||'sin cuenta'}</div>
+        </div>
+      </div>
+      <div class="asset-numbers" style="grid-template-columns:repeat(2,1fr)">
+        <div class="asset-num"><div class="lbl">Entregado</div><div class="val" style="font-size:13px">${d.fecha||'—'}</div></div>
+        <div class="asset-num"><div class="lbl">${esActivo?'Devolución prevista':'Devuelto el'}</div><div class="val" style="font-size:13px">${d.fecha_devolucion||'—'}</div></div>
+      </div>
+      ${d.notas?`<div style="font-size:11px;color:var(--text3);margin-top:8px">${d.notas}</div>`:''}
+      <div style="display:flex;gap:8px;margin-top:12px">
+        ${esActivo?`<button class="btn btn-primary btn-sm" onclick="devolverDeposito(${d.id},'${(d.lugar||d.tipo).replace(/'/g,"")}')">✓ Me lo devolvieron</button>`:''}
+        <button class="btn btn-outline btn-sm" onclick="delDeposito(${d.id})">Eliminar</button>
+      </div>
+    </div>`;
+
+  $('dep-activos').innerHTML = activos.length
+    ? `<div class="asset-grid">${activos.map(d=>card(d,true)).join('')}</div>`
+    : '<p style="color:var(--text3);font-size:13px">Ningún depósito activo.</p>';
+  $('dep-devueltos').innerHTML = devueltos.length
+    ? `<div class="asset-grid">${devueltos.map(d=>card(d,false)).join('')}</div>`
+    : '<p style="color:var(--text3);font-size:13px">Todavía no te han devuelto ninguno.</p>';
+}
+
+async function addDeposito(){
+  const d = {
+    tipo:$('d-tipo').value, persona:$('d-persona').value, lugar:$('d-lugar').value,
+    monto:parseMoney($('d-monto').value), moneda:$('d-moneda').value,
+    cuenta_id:$('d-cuenta').value||null, fecha:$('d-fecha').value,
+    fecha_devolucion:$('d-devolucion').value, notas:$('d-notas').value
+  };
+  if(!d.monto){alert('Ingresa el monto del depósito');return;}
+  if(!d.cuenta_id){alert('Elige de qué cuenta salió el dinero');return;}
+  await fetch('/api/depositos/agregar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});
+  ['d-persona','d-lugar','d-monto','d-notas'].forEach(id=>$(id).value='');
+  loadDepositos(); loadHome(); loadBudget(); loadAhorros();
+}
+
+async function devolverDeposito(id, nombre){
+  if(!confirm(`¿Te devolvieron el depósito de ${nombre}?` + String.fromCharCode(10,10) +
+              'El dinero se sumará de vuelta al saldo de la cuenta.')) return;
+  await fetch('/api/depositos/devolver',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
+  loadDepositos(); loadHome(); loadBudget(); loadAhorros();
+}
+
+async function delDeposito(id){
+  if(!confirm('¿Eliminar este depósito del registro?')) return;
+  await fetch('/api/depositos/eliminar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
+  loadDepositos(); loadHome(); loadBudget(); loadAhorros();
 }
 
 async function loadBudget(){
@@ -2278,7 +2538,7 @@ MANIFEST = {
     ],
 }
 
-SW_JS = """const CACHE='cfo-v12';
+SW_JS = """const CACHE='cfo-v13';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{
