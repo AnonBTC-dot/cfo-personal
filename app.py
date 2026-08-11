@@ -1272,7 +1272,7 @@ input[type="date"]::-webkit-calendar-picker-indicator{opacity:.55;cursor:pointer
       <div class="f-group" style="flex:1 1 100%"><label>Notas</label>
         <input id="d-notas" placeholder="opcional"></div>
     </div>
-    <div style="margin-top:12px"><button class="btn btn-primary" onclick="addDeposito()">+ Registrar depósito</button></div>
+    <div style="margin-top:12px"><button class="btn btn-primary" onclick="registrarDeposito()">+ Registrar depósito</button></div>
   </div>
 
   <div class="section-title">Depósitos activos</div>
@@ -1831,8 +1831,8 @@ async function loadDepositos(){
       </div>
       ${d.notas?`<div style="font-size:11px;color:var(--text3);margin-top:8px">${d.notas}</div>`:''}
       <div style="display:flex;gap:8px;margin-top:12px">
-        ${esActivo?`<button class="btn btn-primary btn-sm" onclick="devolverDeposito(${d.id},'${(d.lugar||d.tipo).replace(/'/g,"")}')">✓ Me lo devolvieron</button>`:''}
-        <button class="btn btn-outline btn-sm" onclick="delDeposito(${d.id})">Eliminar</button>
+        ${esActivo?`<button class="btn btn-primary btn-sm" onclick="marcarDevuelto(${d.id},'${(d.lugar||d.tipo).replace(/'/g,"")}')">✓ Me lo devolvieron</button>`:''}
+        <button class="btn btn-outline btn-sm" onclick="eliminarDeposito(${d.id})">Eliminar</button>
       </div>
     </div>`;
 
@@ -1844,7 +1844,7 @@ async function loadDepositos(){
     : '<p style="color:var(--text3);font-size:13px">Todavía no te han devuelto ninguno.</p>';
 }
 
-async function addDeposito(){
+async function registrarDeposito(){
   const d = {
     tipo:$('d-tipo').value, persona:$('d-persona').value, lugar:$('d-lugar').value,
     monto:parseMoney($('d-monto').value), moneda:$('d-moneda').value,
@@ -1858,14 +1858,14 @@ async function addDeposito(){
   loadDepositos(); loadHome(); loadBudget(); loadAhorros();
 }
 
-async function devolverDeposito(id, nombre){
+async function marcarDevuelto(id, nombre){
   if(!confirm(`¿Te devolvieron el depósito de ${nombre}?` + String.fromCharCode(10,10) +
               'El dinero se sumará de vuelta al saldo de la cuenta.')) return;
   await fetch('/api/depositos/devolver',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
   loadDepositos(); loadHome(); loadBudget(); loadAhorros();
 }
 
-async function delDeposito(id){
+async function eliminarDeposito(id){
   if(!confirm('¿Eliminar este depósito del registro?')) return;
   await fetch('/api/depositos/eliminar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
   loadDepositos(); loadHome(); loadBudget(); loadAhorros();
@@ -2538,7 +2538,7 @@ MANIFEST = {
     ],
 }
 
-SW_JS = """const CACHE='cfo-v13';
+SW_JS = """const CACHE='cfo-v14';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{

@@ -39,5 +39,16 @@ for n, js in enumerate(re.findall(r"<script>(.*?)</script>", mod.DASH, re.S), 1)
         print(f"✗ Error de sintaxis en el bloque <script> #{n}:\n{r.stderr}")
         fallos += 1
 
+# 3) Funciones duplicadas: en JS la última declaración gana en silencio, así que
+#    dos funciones con el mismo nombre hacen que un botón llame a la que no es.
+import collections
+todo = "".join(re.findall(r"<script>(.*?)</script>", mod.DASH, re.S))
+nombres = re.findall(r"(?:async\s+)?function\s+(\w+)\s*\(", todo)
+dups = [n for n, c in collections.Counter(nombres).items() if c > 1]
+if dups:
+    print(f"✗ Funciones JS declaradas más de una vez: {sorted(dups)}")
+    print("  La última sobrescribe a las anteriores sin avisar. Renómbralas.")
+    fallos += 1
+
 print("✓ JavaScript válido" if not fallos else f"\n{fallos} problema(s)")
 sys.exit(1 if fallos else 0)
