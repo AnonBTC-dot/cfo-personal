@@ -1893,7 +1893,12 @@ async function loadBudget(){
       <div class="cash-rows">
         ${c.sin_asignar
           ? `<div class="cash-row"><span class="cash-row-lbl">Gastos antiguos sin cuenta</span></div>`
-          : `<div class="cash-row"><span class="cash-row-lbl">Saldo de la cuenta</span><span class="cash-row-val base">${fmtM(c.saldo_ahorros, c.moneda)}</span></div>`}
+          : c.bloqueado > 0
+            // Con depósitos: explicamos de dónde viene la bajada del saldo
+            ? `<div class="cash-row"><span class="cash-row-lbl">Tenías</span><span class="cash-row-val base">${fmtM(c.saldo_ahorros + c.bloqueado, c.moneda)}</span></div>
+               <div class="cash-row"><span class="cash-row-lbl">🔒 Dejado en depósitos</span><span class="cash-row-val out">−${fmtM(c.bloqueado, c.moneda)}</span></div>
+               <div class="cash-row"><span class="cash-row-lbl">Saldo de la cuenta</span><span class="cash-row-val base">${fmtM(c.saldo_ahorros, c.moneda)}</span></div>`
+            : `<div class="cash-row"><span class="cash-row-lbl">Saldo de la cuenta</span><span class="cash-row-val base">${fmtM(c.saldo_ahorros, c.moneda)}</span></div>`}
         ${c.ingresos_mes>0?`<div class="cash-row"><span class="cash-row-lbl">+ Ingresos del mes</span><span class="cash-row-val in">+${fmtM(c.ingresos_mes,c.moneda)}</span></div>`:''}
         ${c.gastos_mes>0?`
         <div class="cash-row"><span class="cash-row-lbl">− Gastado en el mes</span><span class="cash-row-val out">−${fmtM(c.gastos_mes,c.moneda)}</span></div>
@@ -2538,7 +2543,7 @@ MANIFEST = {
     ],
 }
 
-SW_JS = """const CACHE='cfo-v14';
+SW_JS = """const CACHE='cfo-v15';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{
