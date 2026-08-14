@@ -1350,7 +1350,7 @@ input[type="date"]::-webkit-calendar-picker-indicator{opacity:.55;cursor:pointer
 <script>
 // ── Utils ─────────────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
-const fmt = (n,d=0) => n==null?'—':'$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
+const fmt = (n,d=0) => n==null?'—':'$'+Number(n).toLocaleString('es-CO',{minimumFractionDigits:d,maximumFractionDigits:d});
 const fmtCOP = n => Number(n).toLocaleString('es-CO');
 const today = () => new Date().toISOString().split('T')[0];
 
@@ -1384,8 +1384,35 @@ function cambiarMes(delta){
 const COLORS = ['#6366f1','#8b5cf6','#06b6d4','#10b981','#f59e0b','#ef4444','#ec4899','#3b82f6'];
 
 // ── Money input formatting ────────────────────────────────────────────────────
-const parseMoney = v => parseFloat(String(v).replace(/,/g,'')) || 0;
-const fmtInput  = n => n ? Number(n).toLocaleString('en-US',{maximumFractionDigits:2}) : '';
+// Formato español: 1.234,56 -> el punto separa miles y la coma los decimales.
+// Se aceptan las dos formas al escribir, por si pegas un número copiado.
+const parseMoney = v => {
+  const t = String(v).trim().replace(/[^0-9.,\-]/g, '');
+  if (!t) return 0;
+  const coma = t.lastIndexOf(','), punto = t.lastIndexOf('.');
+  let limpio;
+  if (coma > -1 && punto > -1) {
+    // Están los dos: manda el último. 1.234,56 (español) vs 1,234.56 (inglés)
+    limpio = coma > punto
+      ? t.replace(/\./g, '').replace(',', '.')
+      : t.replace(/,/g, '');
+  } else if (coma > -1) {
+    // Solo coma: es el decimal -> 5,75
+    limpio = t.replace(',', '.');
+  } else if (punto > -1) {
+    // Solo puntos. En formato español son miles (2.000 = dos mil), salvo que
+    // el último grupo no tenga 3 cifras, que entonces es un decimal (1234.5)
+    const grupos = t.split('.');
+    const ultimo = grupos[grupos.length - 1];
+    limpio = (grupos.length > 1 && ultimo.length === 3)
+      ? t.replace(/\./g, '')       // 2.000 · 8.000.000
+      : grupos.slice(0, -1).join('') + '.' + ultimo;  // 1234.5 · 1.5
+  } else {
+    limpio = t;
+  }
+  return parseFloat(limpio) || 0;
+};
+const fmtInput  = n => n ? Number(n).toLocaleString('es-CO',{maximumFractionDigits:2}) : '';
 
 document.addEventListener('input', e => {
   if (!e.target.hasAttribute('data-money')) return;
@@ -1759,7 +1786,7 @@ const MONEDA_CLS = {USD:'usd',COP:'cop',PYG:'pyg',EUR:'eur'};
 function fmtM(n,mon){
   const sym = MONEDA_SYM[mon] || '';
   // Guaraníes y pesos se escriben con punto de miles; dólares con coma
-  const loc = (mon === 'PYG' || mon === 'COP') ? 'es-CO' : 'en-US';
+  const loc = 'es-CO';  // punto para miles, coma para decimales
   const txt = sym + Number(n).toLocaleString(loc, {maximumFractionDigits: 0});
   // '$' lo comparten USD, COP y ARS: añadimos el código para no confundirlos.
   // '₲' y '€' son inequívocos, así que van solos.
@@ -2543,7 +2570,7 @@ MANIFEST = {
     ],
 }
 
-SW_JS = """const CACHE='cfo-v15';
+SW_JS = """const CACHE='cfo-v16';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{
