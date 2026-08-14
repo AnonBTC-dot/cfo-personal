@@ -1173,7 +1173,7 @@ input[type="date"]::-webkit-calendar-picker-indicator{opacity:.55;cursor:pointer
       <div class="f-group"><label>Activo</label><input id="i-activo" placeholder="BTC" style="text-transform:uppercase"></div>
       <div class="f-group" style="flex:0 1 150px;min-width:0"><label>Fecha</label><input id="i-fecha" type="date"></div>
       <div class="f-group"><label>Monto USD</label><input id="i-monto" type="text" inputmode="decimal" data-money placeholder="500"></div>
-      <div class="f-group"><label>Cantidad</label><input id="i-qty" type="number" step="0.00000001" placeholder="0.005"></div>
+      <div class="f-group"><label>Cantidad</label><input id="i-qty" type="text" inputmode="decimal" placeholder="0,005"></div>
       <div class="f-group"><label>Precio por unidad</label><input id="i-precio" type="text" inputmode="decimal" data-money placeholder="100,000"></div>
       <div class="f-group"><label>Notas</label><input id="i-notas" placeholder="opcional" style="min-width:160px"></div>
       <div class="f-group"><label>Contar en meta</label><select id="i-meta"><option value="">Sin meta</option></select></div>
@@ -1413,6 +1413,26 @@ const parseMoney = v => {
   return parseFloat(limpio) || 0;
 };
 const fmtInput  = n => n ? Number(n).toLocaleString('es-CO',{maximumFractionDigits:2}) : '';
+
+// El teclado numérico del móvil escribe PUNTO en la tecla decimal. Como aquí
+// el decimal es la coma, lo convertimos al vuelo: así funciona escribas lo que
+// escribas, y el punto sigue sirviendo de separador de miles al pegar.
+document.addEventListener('beforeinput', e => {
+  const inp = e.target;
+  if (!inp || !inp.hasAttribute || !inp.hasAttribute('data-money')) return;
+  if (e.data !== '.') return;
+  e.preventDefault();
+  const ini = inp.selectionStart, fin = inp.selectionEnd;
+  // Si ya hay una coma, no metemos otra: solo movemos el cursor detrás de ella
+  if (inp.value.includes(',')) {
+    const pos = inp.value.indexOf(',') + 1;
+    try { inp.setSelectionRange(pos, pos); } catch(_){}
+    return;
+  }
+  inp.value = inp.value.slice(0, ini) + ',' + inp.value.slice(fin);
+  try { inp.setSelectionRange(ini + 1, ini + 1); } catch(_){}
+  inp.dispatchEvent(new Event('input', { bubbles: true }));
+});
 
 document.addEventListener('input', e => {
   if (!e.target.hasAttribute('data-money')) return;
@@ -1717,7 +1737,7 @@ async function renderDetail(det,tabla,activo){
             </select>
           </div>
           <div class="f-group" style="margin:0"><label style="font-size:11px">Monto USD</label><input id="ie-monto-${r.id}" type="text" inputmode="decimal" data-money style="font-size:13px;padding:6px 8px;width:100px"></div>
-          <div class="f-group" style="margin:0"><label style="font-size:11px">Cantidad</label><input id="ie-qty-${r.id}" type="number" step="any" style="font-size:13px;padding:6px 8px;width:110px"></div>
+          <div class="f-group" style="margin:0"><label style="font-size:11px">Cantidad</label><input id="ie-qty-${r.id}" type="text" inputmode="decimal" style="font-size:13px;padding:6px 8px;width:110px"></div>
           <div class="f-group" style="margin:0"><label style="font-size:11px">Precio unitario</label><input id="ie-precio-${r.id}" type="text" inputmode="decimal" data-money style="font-size:13px;padding:6px 8px;width:100px"></div>
           <button onclick="event.stopPropagation();saveInvEdit(${r.id},'${tabla}','${activo}')"
             style="height:34px;padding:0 14px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:13px;cursor:pointer;font-weight:600">Guardar</button>
@@ -1745,7 +1765,7 @@ async function saveInvEdit(id,tabla,activo){
     fecha:document.getElementById('ie-fecha-'+id).value,
     tipo:document.getElementById('ie-tipo-'+id).value,
     monto_usd:parseMoney(document.getElementById('ie-monto-'+id).value),
-    cantidad:parseFloat(document.getElementById('ie-qty-'+id).value)||null,
+    cantidad:parseMoney(document.getElementById('ie-qty-'+id).value)||null,
     precio_unitario:parseMoney(document.getElementById('ie-precio-'+id).value)||null,
     notas:document.getElementById('ie-notas-'+id)?.value||'',
   };
@@ -1767,7 +1787,7 @@ async function addInv(){
   const d={
     tabla:$('i-tabla').value, tipo:$('i-tipo').value,
     activo:$('i-activo').value.toUpperCase(), fecha:$('i-fecha').value,
-    monto_usd:monto||undefined, cantidad:$('i-qty').value||null,
+    monto_usd:monto||undefined, cantidad:$('i-qty').value?String(parseMoney($('i-qty').value)):null,
     precio_unitario:parseMoney($('i-precio').value)||null, notas:$('i-notas').value
   };
   if(!d.activo||!d.monto_usd){alert('Activo y monto son requeridos');return;}
@@ -2570,7 +2590,7 @@ MANIFEST = {
     ],
 }
 
-SW_JS = """const CACHE='cfo-v16';
+SW_JS = """const CACHE='cfo-v17';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{
