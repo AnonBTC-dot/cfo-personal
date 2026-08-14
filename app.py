@@ -1439,10 +1439,13 @@ document.addEventListener('input', e => {
   const inp = e.target;
   const caret = inp.selectionStart;
   const before = inp.value.length;
-  const raw = inp.value.replace(/[^0-9.]/g,'');
-  const parts = raw.split('.');
-  parts[0] = parts[0].replace(/\\B(?=(\\d{3})+(?!\\d))/g,',');
-  inp.value = parts.length > 1 ? parts[0]+'.'+parts.slice(1).join('') : parts[0];
+  // Solo dígitos y UNA coma decimal. Los puntos que escribas se ignoran porque
+  // el separador de miles lo pone la app sola.
+  const raw = inp.value.replace(/[^0-9,]/g,'');
+  const parts = raw.split(',');
+  parts[0] = parts[0].replace(/\\B(?=(\\d{3})+(?!\\d))/g,'.');
+  const dec = parts.length > 1 ? parts.slice(1).join('').slice(0,2) : null;
+  inp.value = dec !== null ? parts[0]+','+dec : parts[0];
   const shift = inp.value.length - before;
   try { inp.setSelectionRange(caret+shift, caret+shift); } catch(_){}
 });
@@ -2590,7 +2593,7 @@ MANIFEST = {
     ],
 }
 
-SW_JS = """const CACHE='cfo-v17';
+SW_JS = """const CACHE='cfo-v18';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{
