@@ -2076,6 +2076,36 @@ async function loadBudget(){
     </div>`;
   }).join('') : '<p style="color:var(--text3);font-size:13px">Sin categorías. Agrega una abajo.</p>';
 
+  // ── Total del mes: presupuesto y gastado, agrupados por moneda ──
+  const totMon = {};
+  for (const c of gastoCats) {
+    const mon = c.moneda || 'USD';
+    totMon[mon] ||= { lim: 0, gastado: 0 };
+    totMon[mon].lim += c.limite_mensual || 0;
+    totMon[mon].gastado += c.gastado || 0;
+  }
+  const filas = Object.entries(totMon).filter(([, t]) => t.lim > 0 || t.gastado > 0);
+  if (filas.length) {
+    $('budget-bars').innerHTML += filas.map(([mon, t]) => {
+      const pct = t.lim > 0 ? Math.min(100, (t.gastado / t.lim) * 100) : 0;
+      const cls = !t.lim ? 'bar-green' : pct < 80 ? 'bar-green' : pct < 100 ? 'bar-amber' : 'bar-red';
+      const resta = t.lim - t.gastado;
+      return `
+      <div style="border-top:2px solid var(--border);margin-top:10px;padding-top:12px">
+        <div class="budget-meta">
+          <span class="budget-name" style="font-weight:700">Total ${filas.length > 1 ? mon : ''}</span>
+          <span class="budget-amounts" style="font-weight:700;color:var(--text)">
+            ${fmtM(t.gastado, mon)}${t.lim ? ' / ' + fmtM(t.lim, mon) : ''}
+          </span>
+        </div>
+        ${t.lim ? `<div class="bar-track"><div class="bar-fill ${cls}" style="width:${pct}%"></div></div>
+        <div style="font-size:11px;color:${resta < 0 ? 'var(--red)' : 'var(--text3)'};margin-top:4px;text-align:right">
+          ${resta >= 0 ? 'Te quedan ' + fmtM(resta, mon) : 'Te pasaste ' + fmtM(-resta, mon)}
+        </div>` : ''}
+      </div>`;
+    }).join('');
+  }
+
   // Recientes
   // Guardamos los movimientos para poder precargar el formulario de edición
   TX_CACHE = {}; for(const r of rec) TX_CACHE[r.id] = r;
@@ -2700,7 +2730,7 @@ MANIFEST = {
     ],
 }
 
-SW_JS = """const CACHE='cfo-v19';
+SW_JS = """const CACHE='cfo-v20';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{
