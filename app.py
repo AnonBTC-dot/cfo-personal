@@ -86,6 +86,14 @@ def _migrar():
     except Exception as e:
         print(f"[migración] no se pudo verificar/crear cuenta_id: {e}")
 
+    # Categorías: poder retirarlas de un mes sin borrar el historial
+    try:
+        if not _tiene_columna("categorias", "archivada_desde"):
+            ex("ALTER TABLE categorias ADD COLUMN archivada_desde TEXT")
+            print("[migración] categorias.archivada_desde creada")
+    except Exception as e:
+        print(f"[migración] archivada_desde: {e}")
+
     # Depósitos: dinero tuyo pero bloqueado (garantías de arriendo, etc.)
     try:
         ex("""CREATE TABLE IF NOT EXISTS depositos (
@@ -410,11 +418,18 @@ def borrar_deposito():
 @app.route("/api/budget/mes")
 def budget_mes():
     mes = request.args.get("mes", datetime.now().strftime("%Y-%m"))
-    return jsonify(q("""SELECT c.id,c.nombre,c.limite_mensual,c.tipo,c.moneda,
+    tiene_arch = _tiene_columna("categorias", "archivada_desde")
+    # Una categoría archivada desaparece del mes en que la archivaste y de los
+    # siguientes, pero sigue apareciendo en los meses anteriores con sus gastos.
+    filtro = "WHERE c.archivada_desde IS NULL OR c.archivada_desde > ?" if tiene_arch else ""
+    params = (f"{mes}%", mes) if tiene_arch else (f"{mes}%",)
+    cols = "c.id,c.nombre,c.limite_mensual,c.tipo,c.moneda" + (",c.archivada_desde" if tiene_arch else "")
+    return jsonify(q(f"""SELECT {cols},
         COALESCE(SUM(t.monto),0) as gastado
         FROM categorias c
         LEFT JOIN transacciones t ON t.categoria_id=c.id AND t.fecha LIKE ?
-        GROUP BY c.id ORDER BY gastado DESC""", (f"{mes}%",)))
+        {filtro}
+        GROUP BY c.id ORDER BY gastado DESC""", params))
 
 @app.route("/api/budget/cash")
 def budget_cash():
@@ -637,10 +652,50 @@ def upd_cat():
 
 @app.route("/api/categorias/eliminar", methods=["POST"])
 def del_cat():
+    """
+    Borrar una categoría NUNCA debe llevarse por delante meses ya cerrados.
+    Si tiene movimientos, se niega y te dice cuántos: para dejar de usarla
+    está 'archivar', que la quita de aquí en adelante y conserva el historial.
+    Solo borra de verdad si mandas forzar=true a sabiendas.
+    """
     d = request.json
     cid = d["id"]
-    ex("DELETE FROM transacciones WHERE categoria_id=?", (cid,))
+    n = q("SELECT COUNT(*) as n FROM transacciones WHERE categoria_id=?", (cid,))[0]["n"]
+    if n and not d.get("forzar"):
+        return jsonify({
+            "ok": False,
+            "motivo": "tiene_movimientos",
+            "movimientos": n,
+            "mensaje": f"Esta categoría tiene {n} movimiento(s) registrados en tu historial."
+        }), 409
+    if n:
+        ex("DELETE FROM transacciones WHERE categoria_id=?", (cid,))
     ex("DELETE FROM categorias WHERE id=?", (cid,))
+    return jsonify({"ok": True, "borrados": n})
+
+
+@app.route("/api/categorias/archivadas")
+def cats_archivadas():
+    if not _tiene_columna("categorias", "archivada_desde"):
+        return jsonify([])
+    return jsonify(q("""SELECT c.id, c.nombre, c.tipo, c.moneda, c.archivada_desde,
+        (SELECT COUNT(*) FROM transacciones t WHERE t.categoria_id=c.id) as movimientos
+        FROM categorias c WHERE c.archivada_desde IS NOT NULL
+        ORDER BY c.archivada_desde DESC"""))
+
+
+@app.route("/api/categorias/archivar", methods=["POST"])
+def archivar_cat():
+    """Quita la categoría de este mes en adelante, sin tocar lo ya registrado."""
+    d = request.json
+    mes = d.get("mes") or datetime.now().strftime("%Y-%m")
+    ex("UPDATE categorias SET archivada_desde=? WHERE id=?", (mes, int(d["id"])))
+    return jsonify({"ok": True, "desde": mes})
+
+
+@app.route("/api/categorias/reactivar", methods=["POST"])
+def reactivar_cat():
+    ex("UPDATE categorias SET archivada_desde=NULL WHERE id=?", (int(request.json["id"]),))
     return jsonify({"ok": True})
 
 @app.route("/api/ahorros")
@@ -1328,6 +1383,11 @@ input[type="date"]::-webkit-calendar-picker-indicator{opacity:.55;cursor:pointer
 
 <!-- ── AJUSTES ── -->
 <div class="tab" id="tab-config">
+  <div class="section-title">Categorías retiradas</div>
+  <div class="box" style="margin-bottom:24px">
+    <div id="cats-archivadas"></div>
+  </div>
+
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
     <div class="section-title" style="margin:0">Precios de mercado</div>
     <button class="btn btn-primary" onclick="refreshLive()" id="btn-refresh">↻ Actualizar precios</button>
@@ -1461,7 +1521,7 @@ function goto(name,btn){
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
   $('tab-'+name).classList.add('active');
   btn.classList.add('active');
-  ({home:loadHome,inv:loadInv,budget:loadBudget,ahorros:loadAhorros,depositos:loadDepositos,config:loadConfig})[name]?.();
+  ({home:loadHome,inv:loadInv,budget:loadBudget,ahorros:loadAhorros,depositos:loadDepositos,config:()=>{loadConfig();pintarArchivadas();}})[name]?.();
 }
 
 // ── ONBOARDING ────────────────────────────────────────────────────────────────
@@ -1986,7 +2046,8 @@ async function loadBudget(){
         <span class="budget-amounts">${fmtC(c.gastado,c)}${lim?' / '+fmtC(lim,c):''} <span style="color:var(--text3);font-size:10px">${c.moneda||'USD'}</span></span>
         <span class="budget-actions">
           <button class="budget-action-btn" title="Editar" onclick="toggleEditCat(${c.id})">✏️</button>
-          <button class="budget-action-btn del" title="Eliminar" onclick="deleteCat(${c.id},'${c.nombre.replace(/'/g,"\\'")}')">🗑</button>
+          <button class="budget-action-btn" title="Quitar de este mes en adelante" onclick="archivarCat(${c.id},'${c.nombre.replace(/'/g,"\\'")}')">📦</button>
+          <button class="budget-action-btn del" title="Eliminar definitivamente" onclick="deleteCat(${c.id},'${c.nombre.replace(/'/g,"\\'")}')">🗑</button>
         </span>
       </div>
       <div class="bar-track"><div class="bar-fill ${cls}" style="width:${pct}%"></div></div>
@@ -2134,13 +2195,59 @@ async function saveCat(id){
   loadBudget();
 }
 
+async function archivarCat(id, nombre){
+  const etiqueta = mesLbl ? mesLbl(MES) : MES;
+  if(!confirm(`Quitar "${nombre}" de ${etiqueta} en adelante.` + String.fromCharCode(10,10) +
+              'Los meses anteriores conservan sus gastos intactos.' + String.fromCharCode(10) +
+              'Puedes recuperarla desde Ajustes cuando quieras.')) return;
+  await fetch('/api/categorias/archivar',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id, mes: MES})});
+  loadBudget(); loadHome();
+}
+
 async function deleteCat(id,nombre){
-  if(!confirm(`¿Eliminar "${nombre}"? También se borrarán sus transacciones.`)) return;
-  await fetch('/api/categorias/eliminar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
-  loadBudget();
+  // Primer intento sin forzar: el servidor se niega si hay historial
+  const r = await fetch('/api/categorias/eliminar',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id})});
+  if (r.ok) { loadBudget(); loadHome(); return; }
+
+  const info = await r.json();
+  if (info.motivo === 'tiene_movimientos') {
+    const ok = confirm(
+      `"${nombre}" tiene ${info.movimientos} movimiento(s) guardados.` + String.fromCharCode(10,10) +
+      'Si la borras se pierden TAMBIÉN esos gastos, de todos los meses, y los saldos cambiarán.' + String.fromCharCode(10,10) +
+      'Si solo quieres dejar de usarla, cancela y pulsa 📦 para quitarla de este mes conservando el historial.' + String.fromCharCode(10,10) +
+      '¿Borrar todo de todas formas?');
+    if (!ok) return;
+    const seguro = prompt('Escribe BORRAR para confirmar que quieres perder esos movimientos:');
+    if (seguro !== 'BORRAR') return;
+    await fetch('/api/categorias/eliminar',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id, forzar:true})});
+  }
+  loadBudget(); loadHome();
 }
 
 // ── AHORROS ──────────────────────────────────────────────────────────────────
+async function pintarArchivadas(){
+  const caja = $('cats-archivadas');
+  if (!caja) return;
+  const arch = await fetch('/api/categorias/archivadas').then(r=>r.json());
+  caja.innerHTML = arch.length ? arch.map(c=>`
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border2);gap:8px">
+      <div style="min-width:0">
+        <div style="font-size:13px;font-weight:500">${c.nombre}</div>
+        <div style="font-size:11px;color:var(--text3)">Retirada desde ${c.archivada_desde} · ${c.movimientos} movimiento(s) guardados</div>
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="reactivarCat(${c.id})">Volver a usar</button>
+    </div>`).join('')
+    : '<p style="color:var(--text3);font-size:13px;margin:0">Ninguna. Las categorías que retires con 📦 aparecerán aquí y podrás recuperarlas.</p>';
+}
+
+async function reactivarCat(id){
+  await fetch('/api/categorias/reactivar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
+  pintarArchivadas(); loadBudget(); loadHome();
+}
+
 async function loadAhorros(){
   const [ah,mt,cashData,cfg]=await Promise.all([
     fetch('/api/ahorros').then(r=>r.json()),
@@ -2593,7 +2700,7 @@ MANIFEST = {
     ],
 }
 
-SW_JS = """const CACHE='cfo-v18';
+SW_JS = """const CACHE='cfo-v19';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{
