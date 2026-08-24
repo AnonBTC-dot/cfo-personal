@@ -638,10 +638,37 @@ def categorias(): return jsonify(q("SELECT * FROM categorias ORDER BY nombre"))
 
 @app.route("/api/categorias/agregar", methods=["POST"])
 def add_cat():
+    """
+    Antes era un INSERT OR IGNORE: si el nombre ya existía (aunque estuviera
+    archivado y por tanto invisible en Budget), la petición 'funcionaba' pero
+    no pasaba nada y parecía que la app no dejaba agregar categorías.
+    Ahora: si no existe la crea; si existe la actualiza y la desarchiva.
+    """
     d = request.json
-    ex("INSERT OR IGNORE INTO categorias(nombre,limite_mensual,tipo,moneda) VALUES(?,?,?,?)",
-       (d["nombre"], d.get("limite_mensual") or None, d.get("tipo","gasto"), d.get("moneda","USD")))
-    return jsonify({"ok": True})
+    nombre = (d.get("nombre") or "").strip()
+    if not nombre:
+        return jsonify({"ok": False, "error": "Falta el nombre de la categoría"}), 400
+
+    limite = d.get("limite_mensual") or None
+    tipo = d.get("tipo", "gasto")
+    moneda = d.get("moneda", "USD")
+
+    try:
+        existente = q("SELECT id FROM categorias WHERE LOWER(nombre)=LOWER(?)", (nombre,))
+        if existente:
+            cid = existente[0]["id"]
+            ex("UPDATE categorias SET nombre=?,limite_mensual=?,tipo=?,moneda=? WHERE id=?",
+               (nombre, limite, tipo, moneda, cid))
+            if _tiene_columna("categorias", "archivada_desde"):
+                ex("UPDATE categorias SET archivada_desde=NULL WHERE id=?", (cid,))
+            return jsonify({"ok": True, "id": cid, "reactivada": True})
+
+        ex("INSERT INTO categorias(nombre,limite_mensual,tipo,moneda) VALUES(?,?,?,?)",
+           (nombre, limite, tipo, moneda))
+        nueva = q("SELECT id FROM categorias WHERE LOWER(nombre)=LOWER(?)", (nombre,))
+        return jsonify({"ok": True, "id": nueva[0]["id"] if nueva else None})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.route("/api/categorias/actualizar", methods=["POST"])
 def upd_cat():
@@ -2030,10 +2057,13 @@ async function loadBudget(){
 
   // Populate category select
   const sel=$('qa-cat');
-  sel.innerHTML=cats.filter(c=>c.tipo==='gasto').map(c=>`<option value="${c.nombre}">${c.nombre}</option>`).join('');
+  sel.innerHTML=cats.filter(c=>c.tipo!=='ingreso')
+    .map(c=>`<option value="${c.nombre}">${c.nombre}${c.tipo==='ahorro'?' (ahorro)':''}</option>`).join('');
 
   // Budget bars
-  const gastoCats=cats.filter(c=>c.tipo==='gasto'||(c.tipo==='ahorro'&&c.limite_mensual));
+  // Antes las categorías de tipo "ahorro" sin límite no se veían: las creabas
+  // y desaparecían. Ahora se muestran todas menos las de ingreso.
+  const gastoCats=cats.filter(c=>c.tipo!=='ingreso');
   const sym = c => ({USD:'$',COP:'$',PYG:'₲',EUR:'€',ARS:'$'}[c.moneda||'USD']||'$');
   const fmtC = (n,c) => sym(c)+Number(n).toLocaleString('en-US',{maximumFractionDigits:0});
   $('budget-bars').innerHTML = gastoCats.length ? gastoCats.map(c=>{
@@ -2042,7 +2072,7 @@ async function loadBudget(){
     const cls=lim>0&&c.gastado>lim?'bar-red':'bar-green';
     return `<div class="budget-item" id="bi-${c.id}">
       <div class="budget-meta">
-        <span class="budget-name">${c.nombre}</span>
+        <span class="budget-name">${c.nombre}${c.tipo==='ahorro'?' <span style="font-size:10px;font-weight:600;color:var(--green);border:1px solid var(--green);border-radius:6px;padding:1px 5px;vertical-align:middle">AHORRO</span>':''}</span>
         <span class="budget-amounts">${fmtC(c.gastado,c)}${lim?' / '+fmtC(lim,c):''} <span style="color:var(--text3);font-size:10px">${c.moneda||'USD'}</span></span>
         <span class="budget-actions">
           <button class="budget-action-btn" title="Editar" onclick="toggleEditCat(${c.id})">✏️</button>
@@ -2077,12 +2107,15 @@ async function loadBudget(){
   }).join('') : '<p style="color:var(--text3);font-size:13px">Sin categorías. Agrega una abajo.</p>';
 
   // ── Total del mes: presupuesto y gastado, agrupados por moneda ──
-  const totMon = {};
+  // El ahorro NO es gasto: va en su propia línea para que el total de gastos
+  // siga siendo lo que de verdad se te fue en consumo.
+  const totMon = {}, totAhorro = {};
   for (const c of gastoCats) {
     const mon = c.moneda || 'USD';
-    totMon[mon] ||= { lim: 0, gastado: 0 };
-    totMon[mon].lim += c.limite_mensual || 0;
-    totMon[mon].gastado += c.gastado || 0;
+    const destino = c.tipo === 'ahorro' ? totAhorro : totMon;
+    destino[mon] ||= { lim: 0, gastado: 0 };
+    destino[mon].lim += c.limite_mensual || 0;
+    destino[mon].gastado += c.gastado || 0;
   }
   const filas = Object.entries(totMon).filter(([, t]) => t.lim > 0 || t.gastado > 0);
   if (filas.length) {
@@ -2102,6 +2135,23 @@ async function loadBudget(){
         <div style="font-size:11px;color:${resta < 0 ? 'var(--red)' : 'var(--text3)'};margin-top:4px;text-align:right">
           ${resta >= 0 ? 'Te quedan ' + fmtM(resta, mon) : 'Te pasaste ' + fmtM(-resta, mon)}
         </div>` : ''}
+      </div>`;
+    }).join('');
+  }
+
+  const filasAhorro = Object.entries(totAhorro).filter(([, t]) => t.lim > 0 || t.gastado > 0);
+  if (filasAhorro.length) {
+    $('budget-bars').innerHTML += filasAhorro.map(([mon, t]) => {
+      const pct = t.lim > 0 ? Math.min(100, (t.gastado / t.lim) * 100) : 0;
+      return `
+      <div style="border-top:1px dashed var(--border);margin-top:10px;padding-top:12px">
+        <div class="budget-meta">
+          <span class="budget-name" style="font-weight:700;color:var(--green)">Ahorrado ${filasAhorro.length > 1 ? mon : ''}</span>
+          <span class="budget-amounts" style="font-weight:700;color:var(--green)">
+            ${fmtM(t.gastado, mon)}${t.lim ? ' / ' + fmtM(t.lim, mon) : ''}
+          </span>
+        </div>
+        ${t.lim ? `<div class="bar-track"><div class="bar-fill bar-green" style="width:${pct}%"></div></div>` : ''}
       </div>`;
     }).join('');
   }
@@ -2202,9 +2252,12 @@ async function addGasto(){
 }
 
 async function addCat(){
-  const d={nombre:$('nc-nombre').value,limite_mensual:parseMoney($('nc-limite').value)||null,tipo:$('nc-tipo').value,moneda:$('nc-moneda').value};
+  const d={nombre:$('nc-nombre').value.trim(),limite_mensual:parseMoney($('nc-limite').value)||null,tipo:$('nc-tipo').value,moneda:$('nc-moneda').value};
   if(!d.nombre){alert('Ingresa el nombre');return;}
-  await fetch('/api/categorias/agregar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});
+  const r=await fetch('/api/categorias/agregar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok||!j.ok){alert('No se pudo agregar la categoría: '+(j.error||r.status));return;}
+  if(j.reactivada) alert('"'+d.nombre+'" ya existía (estaba archivada). La reactivé con estos datos.');
   $('nc-nombre').value='';$('nc-limite').value='';
   loadBudget();
 }
@@ -2730,7 +2783,7 @@ MANIFEST = {
     ],
 }
 
-SW_JS = """const CACHE='cfo-v20';
+SW_JS = """const CACHE='cfo-v21';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{
