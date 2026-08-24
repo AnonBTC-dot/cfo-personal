@@ -1128,8 +1128,17 @@ tr:hover td{background:var(--bg)}
 .btn-outline:hover{border-color:var(--accent);color:var(--accent)}
 
 /* Budget bars */
-.budget-item{margin-bottom:2px;border-radius:10px;padding:10px 10px 8px;transition:.15s}
-.budget-item:hover{background:var(--bg)}
+/* La fila entera lleva el color de su grupo: barra lateral + fondo suave.
+   Asi se ve de un golpe cuanto de la lista es esencial y cuanto es ocio,
+   sin leer categoria por categoria. */
+.budget-item{margin-bottom:4px;border-radius:10px;padding:10px 10px 8px;transition:.15s;
+  border-left:4px solid transparent}
+.budget-item[data-g="esencial"]{border-left-color:var(--blue); background:var(--blue-bg)}
+.budget-item[data-g="ocio"]    {border-left-color:var(--amber);background:var(--amber-bg)}
+.budget-item[data-g="ahorro"]  {border-left-color:var(--green);background:var(--green-bg)}
+.budget-item:hover{filter:brightness(.97)}
+/* Sobre fondo de color, el carril de la barra necesita mas contraste */
+.budget-item[data-g] .bar-track{background:rgba(0,0,0,.09)}
 .budget-meta{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px}
 .budget-name{font-size:13px;font-weight:500}
 .budget-meta>.grupo-sel{margin-right:auto}
@@ -1560,7 +1569,7 @@ input[type="date"]::-webkit-calendar-picker-indicator{opacity:.55;cursor:pointer
 <div class="tab" id="tab-config">
   <div class="box" style="margin-bottom:24px;display:flex;justify-content:space-between;align-items:center;gap:12px">
     <div>
-      <div style="font-size:13px;font-weight:600">Versión 25</div>
+      <div style="font-size:13px;font-weight:600">Versión 26</div>
       <div style="font-size:11px;color:var(--text3)">Si algo nuevo no te aparece, es que estás viendo una copia guardada.</div>
     </div>
     <button class="btn btn-outline btn-sm" onclick="forzarActualizar()">↻ Traer la última</button>
@@ -2063,8 +2072,11 @@ const grupoDe = c => GRUPOS.some(g=>g.k===c.grupo) ? c.grupo : (c.tipo==='ahorro
 let PLAN = null;
 
 async function setGrupo(id, grupo){
-  const sel = document.querySelector(`#bi-${id} .grupo-sel`);
-  if(sel) sel.dataset.g = grupo; // el color cambia ya, sin esperar al servidor
+  // El color cambia ya, sin esperar al servidor
+  const fila = document.getElementById('bi-'+id);
+  if(fila) fila.dataset.g = grupo;
+  const sel = fila && fila.querySelector('.grupo-sel');
+  if(sel) sel.dataset.g = grupo;
   const r = await fetch('/api/categorias/grupo',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({id,grupo})});
   const j = await r.json().catch(()=>({}));
@@ -2441,12 +2453,14 @@ async function loadBudget(){
     const lim=c.limite_mensual||0;
     const pct=lim>0?Math.min(100,(c.gastado/lim)*100):100;
     const cls=lim>0&&c.gastado>lim?'bar-red':'bar-green';
-    return `<div class="budget-item" id="bi-${c.id}">
+    const g = grupoDe(c);
+    const colorGrupo = (GRUPOS.find(x=>x.k===g)||{}).color;
+    return `<div class="budget-item" data-g="${g}" id="bi-${c.id}">
       <div class="budget-meta">
         <span class="budget-name">${c.nombre}</span>
-        <select class="grupo-sel" data-g="${grupoDe(c)}" title="Grupo del 50/30/20"
+        <select class="grupo-sel" data-g="${g}" title="Grupo del 50/30/20"
                 onchange="setGrupo(${c.id},this.value)">
-          ${GRUPOS.map(g=>`<option value="${g.k}" ${grupoDe(c)===g.k?'selected':''}>${g.icono} ${g.nombre}</option>`).join('')}
+          ${GRUPOS.map(x=>`<option value="${x.k}" ${g===x.k?'selected':''}>${x.icono} ${x.nombre}</option>`).join('')}
         </select>
         <span class="budget-amounts">${fmtC(c.gastado,c)}${lim?' / '+fmtC(lim,c):''} <span style="color:var(--text3);font-size:10px">${c.moneda||'USD'}</span></span>
         <span class="budget-actions">
@@ -2455,7 +2469,7 @@ async function loadBudget(){
           <button class="budget-action-btn del" title="Eliminar definitivamente" onclick="deleteCat(${c.id},'${c.nombre.replace(/'/g,"\\'")}')">🗑</button>
         </span>
       </div>
-      <div class="bar-track"><div class="bar-fill ${cls}" style="width:${pct}%"></div></div>
+      <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${cls==='bar-red'?'var(--red)':colorGrupo}"></div></div>
       <div class="cat-edit-form" id="cef-${c.id}">
         <div class="form-row">
           <div class="f-group"><label>Nombre</label><input id="ce-nom-${c.id}" value="${c.nombre}" style="min-width:120px"></div>
@@ -3173,7 +3187,7 @@ MANIFEST = {
     ],
 }
 
-SW_JS = """const CACHE='cfo-v25';
+SW_JS = """const CACHE='cfo-v26';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{
