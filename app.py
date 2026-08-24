@@ -2078,6 +2078,80 @@ async function guardarPlan(){
   loadBudget();
 }
 
+/**
+ * Dona del reparto real del mes. SVG a mano y no una librería: la app tiene
+ * que abrir sin internet desde el icono del celular, y un <script src> de un
+ * CDN es justo lo que rompe eso.
+ *
+ * El anillo exterior (fino) es tu META; el grueso, lo que llevas de verdad.
+ * Si el color grueso se pasa del tramo fino de su color, te pasaste.
+ */
+function donaPlan(real, pcts, ingreso, mon){
+  if(!ingreso) return '';
+  const R = 54, C = 2 * Math.PI * R;
+  const usado = GRUPOS.reduce((a,g)=>a+real[g.k], 0);
+  const resto = Math.max(0, ingreso - usado);
+
+  // Si gastaste más de lo que entró, la dona se reparte sobre el gasto total
+  const base = Math.max(ingreso, usado);
+
+  let acc = 0;
+  const arcos = GRUPOS.map(g=>{
+    const frac = base > 0 ? real[g.k]/base : 0;
+    const seg = `<circle cx="70" cy="70" r="${R}" fill="none" stroke="${g.color}" stroke-width="20"
+      stroke-dasharray="${(frac*C).toFixed(2)} ${C.toFixed(2)}"
+      stroke-dashoffset="${(-acc*C).toFixed(2)}" transform="rotate(-90 70 70)"></circle>`;
+    acc += frac;
+    return seg;
+  }).join('');
+
+  const arcoResto = resto > 0
+    ? `<circle cx="70" cy="70" r="${R}" fill="none" stroke="var(--border)" stroke-width="20"
+        stroke-dasharray="${((resto/base)*C).toFixed(2)} ${C.toFixed(2)}"
+        stroke-dashoffset="${(-acc*C).toFixed(2)}" transform="rotate(-90 70 70)"></circle>`
+    : '';
+
+  // Anillo de metas, por fuera y más fino
+  const Rm = 68, Cm = 2 * Math.PI * Rm;
+  let accM = 0;
+  const metas = GRUPOS.map(g=>{
+    const frac = pcts[g.k]/100;
+    const seg = `<circle cx="70" cy="70" r="${Rm}" fill="none" stroke="${g.color}" stroke-width="4" opacity=".45"
+      stroke-dasharray="${Math.max(0,(frac*Cm)-3).toFixed(2)} ${Cm.toFixed(2)}"
+      stroke-dashoffset="${(-accM*Cm).toFixed(2)}" transform="rotate(-90 70 70)"></circle>`;
+    accM += frac;
+    return seg;
+  }).join('');
+
+  const leyenda = GRUPOS.map(g=>{
+    const pctReal = ingreso > 0 ? real[g.k]/ingreso*100 : 0;
+    return `<div style="display:flex;align-items:center;gap:7px;margin-bottom:7px">
+      <span style="width:10px;height:10px;border-radius:3px;background:${g.color};flex:none"></span>
+      <span style="font-size:12px;flex:1">${g.nombre}</span>
+      <b style="font-size:12px">${pctReal.toFixed(0)}%</b>
+      <span style="font-size:11px;color:var(--text3);min-width:52px;text-align:right">meta ${pcts[g.k].toFixed(0)}%</span>
+    </div>`;
+  }).join('') + (resto > 0 ? `<div style="display:flex;align-items:center;gap:7px">
+      <span style="width:10px;height:10px;border-radius:3px;background:var(--border);flex:none"></span>
+      <span style="font-size:12px;flex:1;color:var(--text3)">Sin asignar</span>
+      <b style="font-size:12px;color:var(--text3)">${(resto/ingreso*100).toFixed(0)}%</b>
+    </div>` : '');
+
+  return `<div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-bottom:18px">
+    <svg viewBox="0 0 140 140" style="width:140px;height:140px;flex:none">
+      ${metas}${arcos}${arcoResto}
+      <text x="70" y="66" text-anchor="middle" style="font:600 15px Inter,sans-serif;fill:var(--text)">${fmtM(ingreso,mon)}</text>
+      <text x="70" y="82" text-anchor="middle" style="font:500 10px Inter,sans-serif;fill:var(--text3)">ingreso del mes</text>
+    </svg>
+    <div style="flex:1;min-width:180px">
+      ${leyenda}
+      <div style="font-size:10px;color:var(--text3);margin-top:8px;line-height:1.5">
+        Anillo fino exterior = tu meta · relleno grueso = lo que llevas
+      </div>
+    </div>
+  </div>`;
+}
+
 /** Pinta las barras por grupo: objetivo vs lo que llevas de verdad. */
 function pintarGrupos(cats){
   if(!PLAN){$('plan-grupos').innerHTML='';return;}
@@ -2106,7 +2180,7 @@ function pintarGrupos(cats){
   const usado = real.esencial + real.ocio + real.ahorro;
   const sinAsignar = ingreso - usado;
 
-  $('plan-grupos').innerHTML = GRUPOS.map(g=>{
+  $('plan-grupos').innerHTML = donaPlan(real, pcts, ingreso, mon) + GRUPOS.map(g=>{
     const meta = ingreso * pcts[g.k] / 100;
     const llevas = real[g.k];
     const pctReal = ingreso > 0 ? (llevas/ingreso*100) : 0;
@@ -3060,7 +3134,7 @@ MANIFEST = {
     ],
 }
 
-SW_JS = """const CACHE='cfo-v23';
+SW_JS = """const CACHE='cfo-v24';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{
