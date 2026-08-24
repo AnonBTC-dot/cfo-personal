@@ -1131,8 +1131,30 @@ tr:hover td{background:var(--bg)}
 .budget-item{margin-bottom:2px;border-radius:10px;padding:10px 10px 8px;transition:.15s}
 .budget-item:hover{background:var(--bg)}
 .budget-meta{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px}
-.budget-name{font-size:13px;font-weight:500;flex:1}
+.budget-name{font-size:13px;font-weight:500}
+.budget-meta>.grupo-sel{margin-right:auto}
 .budget-amounts{font-size:12px;color:var(--text3)}
+/* Chip de grupo del 50/30/20: SIEMPRE visible (no depende del hover, que en
+   el celular ni existe) y con el color de su grupo, para leer la mezcla de
+   esencial/ocio/ahorro de un vistazo sin abrir nada. */
+.grupo-sel{
+  appearance:none;-webkit-appearance:none;
+  font-family:inherit;font-size:11px;font-weight:600;line-height:1;
+  border-radius:999px;padding:4px 20px 4px 9px;cursor:pointer;
+  border:1.5px solid currentColor;background-color:transparent;
+  background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),
+                   linear-gradient(135deg,currentColor 50%,transparent 50%);
+  background-position:calc(100% - 11px) calc(50% + 1px),calc(100% - 7px) calc(50% + 1px);
+  background-size:4px 4px,4px 4px;background-repeat:no-repeat;
+  transition:.15s;flex:none
+}
+.grupo-sel:hover{filter:brightness(.9)}
+.grupo-chip{font-size:11px;font-weight:700;border-radius:999px;padding:3px 9px;margin-right:6px}
+.grupo-sel option{color:var(--text);background:var(--surface);font-weight:500}
+.grupo-sel[data-g="esencial"]{color:var(--blue);background-color:var(--blue-bg)}
+.grupo-sel[data-g="ocio"]{color:var(--amber);background-color:var(--amber-bg)}
+.grupo-sel[data-g="ahorro"]{color:var(--green);background-color:var(--green-bg)}
+
 .budget-actions{display:flex;gap:4px;opacity:0;transition:.15s}
 .budget-item:hover .budget-actions{opacity:1}
 .budget-action-btn{background:none;border:none;cursor:pointer;padding:3px 5px;border-radius:5px;font-size:12px;color:var(--text3);font-family:inherit}
@@ -1283,7 +1305,7 @@ input[type="date"]::-webkit-calendar-picker-indicator{opacity:.55;cursor:pointer
   .form-row .f-group input,.form-row .f-group select{width:100%;min-width:0}
   .form-row .btn{flex:1 1 100%;padding:12px}
   input,select{font-size:16px!important}
-  .grupo-sel{font-size:11px!important;max-width:104px}
+  .grupo-sel{font-size:11px!important;padding:4px 18px 4px 8px}
   .hero{padding:22px 20px;border-radius:16px}
   .modal{padding:24px;border-radius:18px}
   th,td{padding:8px 10px}
@@ -2025,14 +2047,16 @@ const MONEDA_CLS = {USD:'usd',COP:'cop',PYG:'pyg',EUR:'eur'};
    y decides tú si recortas o si cambias la meta. No se ajusta sola, porque
    una meta que se mueve para darte la razón deja de ser una meta.        */
 const GRUPOS = [
-  {k:'esencial', nombre:'Esencial', icono:'🏠', color:'var(--blue)'},
-  {k:'ocio',     nombre:'Ocio',     icono:'🎉', color:'var(--amber)'},
-  {k:'ahorro',   nombre:'Ahorro',   icono:'💰', color:'var(--green)'},
+  {k:'esencial', nombre:'Esencial', icono:'🏠', color:'var(--blue)',  bg:'var(--blue-bg)'},
+  {k:'ocio',     nombre:'Ocio',     icono:'🎉', color:'var(--amber)', bg:'var(--amber-bg)'},
+  {k:'ahorro',   nombre:'Ahorro',   icono:'💰', color:'var(--green)', bg:'var(--green-bg)'},
 ];
 const grupoDe = c => GRUPOS.some(g=>g.k===c.grupo) ? c.grupo : (c.tipo==='ahorro' ? 'ahorro' : 'esencial');
 let PLAN = null;
 
 async function setGrupo(id, grupo){
+  const sel = document.querySelector(`#bi-${id} .grupo-sel`);
+  if(sel) sel.dataset.g = grupo; // el color cambia ya, sin esperar al servidor
   const r = await fetch('/api/categorias/grupo',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({id,grupo})});
   const j = await r.json().catch(()=>({}));
@@ -2099,7 +2123,8 @@ function pintarGrupos(cats){
         : (redondo < 0 ? `Te quedan ${fmtM(-redondo,mon)}` : `Te pasaste ${fmtM(redondo,mon)}`);
     return `<div style="margin-bottom:12px">
       <div class="budget-meta">
-        <span class="budget-name">${g.icono} ${g.nombre}
+        <span class="budget-name">
+          <span class="grupo-chip" style="color:${g.color};background:${g.bg}">${g.icono} ${g.nombre}</span>
           <span style="color:var(--text3);font-size:11px">meta ${pcts[g.k].toFixed(0)}%</span></span>
         <span class="budget-amounts">
           <b style="color:${mal?'var(--red)':g.color}">${fmtM(llevas,mon)}</b>
@@ -2320,12 +2345,13 @@ async function loadBudget(){
     const cls=lim>0&&c.gastado>lim?'bar-red':'bar-green';
     return `<div class="budget-item" id="bi-${c.id}">
       <div class="budget-meta">
-        <span class="budget-name">${c.nombre}${c.tipo==='ahorro'?' <span style="font-size:10px;font-weight:600;color:var(--green);border:1px solid var(--green);border-radius:6px;padding:1px 5px;vertical-align:middle">AHORRO</span>':''}</span>
+        <span class="budget-name">${c.nombre}</span>
+        <select class="grupo-sel" data-g="${grupoDe(c)}" title="Grupo del 50/30/20"
+                onchange="setGrupo(${c.id},this.value)">
+          ${GRUPOS.map(g=>`<option value="${g.k}" ${grupoDe(c)===g.k?'selected':''}>${g.icono} ${g.nombre}</option>`).join('')}
+        </select>
         <span class="budget-amounts">${fmtC(c.gastado,c)}${lim?' / '+fmtC(lim,c):''} <span style="color:var(--text3);font-size:10px">${c.moneda||'USD'}</span></span>
         <span class="budget-actions">
-          <select class="grupo-sel" title="Grupo del 50/30/20" onchange="setGrupo(${c.id},this.value)">
-            ${GRUPOS.map(g=>`<option value="${g.k}" ${grupoDe(c)===g.k?'selected':''}>${g.icono} ${g.nombre}</option>`).join('')}
-          </select>
           <button class="budget-action-btn" title="Editar" onclick="toggleEditCat(${c.id})">✏️</button>
           <button class="budget-action-btn" title="Quitar de este mes en adelante" onclick="archivarCat(${c.id},'${c.nombre.replace(/'/g,"\\'")}')">📦</button>
           <button class="budget-action-btn del" title="Eliminar definitivamente" onclick="deleteCat(${c.id},'${c.nombre.replace(/'/g,"\\'")}')">🗑</button>
@@ -3034,7 +3060,7 @@ MANIFEST = {
     ],
 }
 
-SW_JS = """const CACHE='cfo-v22';
+SW_JS = """const CACHE='cfo-v23';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{
