@@ -94,6 +94,33 @@ def _migrar():
     except Exception as e:
         print(f"[migración] archivada_desde: {e}")
 
+    # Regla 50/30/20: cada categoría pertenece a un grupo del presupuesto.
+    # esencial = techo, comida, transporte, salud · ocio = todo lo prescindible
+    # ahorro   = lo que apartas (incluye inversión)
+    try:
+        if not _tiene_columna("categorias", "grupo"):
+            ex("ALTER TABLE categorias ADD COLUMN grupo TEXT")
+            # Arranque sensato: lo que ya marcaste como ahorro va a 'ahorro',
+            # el resto a 'esencial'. Reclasificar es un desplegable, no un drama.
+            ex("UPDATE categorias SET grupo='ahorro' WHERE tipo='ahorro' AND grupo IS NULL")
+            ex("UPDATE categorias SET grupo='esencial' WHERE grupo IS NULL AND tipo<>'ingreso'")
+            print("[migración] categorias.grupo creada")
+    except Exception as e:
+        print(f"[migración] grupo: {e}")
+
+    # Plan del mes: cuánto entra y qué reparto quieres (50/30/20 por defecto)
+    try:
+        ex("""CREATE TABLE IF NOT EXISTS plan_mensual (
+            mes TEXT PRIMARY KEY,
+            ingreso REAL DEFAULT 0,
+            moneda TEXT DEFAULT 'USD',
+            pct_esencial REAL DEFAULT 50,
+            pct_ocio REAL DEFAULT 30,
+            pct_ahorro REAL DEFAULT 20
+        )""")
+    except Exception as e:
+        print(f"[migración] plan_mensual: {e}")
+
     # Depósitos: dinero tuyo pero bloqueado (garantías de arriendo, etc.)
     try:
         ex("""CREATE TABLE IF NOT EXISTS depositos (
@@ -424,6 +451,8 @@ def budget_mes():
     filtro = "WHERE c.archivada_desde IS NULL OR c.archivada_desde > ?" if tiene_arch else ""
     params = (f"{mes}%", mes) if tiene_arch else (f"{mes}%",)
     cols = "c.id,c.nombre,c.limite_mensual,c.tipo,c.moneda" + (",c.archivada_desde" if tiene_arch else "")
+    if _tiene_columna("categorias", "grupo"):
+        cols += ",c.grupo"
     return jsonify(q(f"""SELECT {cols},
         COALESCE(SUM(t.monto),0) as gastado
         FROM categorias c
@@ -633,6 +662,73 @@ def add_tx():
            (d.get("fecha",date.today().isoformat()), cid, float(d["monto"]), d.get("descripcion",""), tipo))
     return jsonify({"ok": True})
 
+GRUPOS = ("esencial", "ocio", "ahorro")
+GRUPO_DEFAULT = {"pct_esencial": 50.0, "pct_ocio": 30.0, "pct_ahorro": 20.0}
+
+
+@app.route("/api/plan")
+def get_plan():
+    """
+    Ingreso y reparto objetivo del mes. Si el mes es nuevo, hereda los
+    porcentajes del último mes que hayas configurado (el ingreso NO se hereda:
+    escribirlo cada mes es justo el punto de revisarlo).
+    """
+    mes = request.args.get("mes", datetime.now().strftime("%Y-%m"))
+    try:
+        r = q("SELECT * FROM plan_mensual WHERE mes=?", (mes,))
+        if r:
+            return jsonify(r[0])
+        prev = q("SELECT * FROM plan_mensual WHERE mes<? ORDER BY mes DESC LIMIT 1", (mes,))
+        base = prev[0] if prev else {}
+        return jsonify({
+            "mes": mes,
+            "ingreso": 0,
+            "moneda": base.get("moneda", "USD"),
+            "pct_esencial": base.get("pct_esencial", 50),
+            "pct_ocio": base.get("pct_ocio", 30),
+            "pct_ahorro": base.get("pct_ahorro", 20),
+        })
+    except Exception as e:
+        return jsonify({"mes": mes, "ingreso": 0, "moneda": "USD", **GRUPO_DEFAULT, "error": str(e)})
+
+
+@app.route("/api/plan/guardar", methods=["POST"])
+def set_plan():
+    d = request.json
+    mes = d.get("mes") or datetime.now().strftime("%Y-%m")
+    vals = (
+        float(d.get("ingreso") or 0),
+        d.get("moneda", "USD"),
+        float(d.get("pct_esencial", 50)),
+        float(d.get("pct_ocio", 30)),
+        float(d.get("pct_ahorro", 20)),
+    )
+    try:
+        existe = q("SELECT mes FROM plan_mensual WHERE mes=?", (mes,))
+        if existe:
+            ex("""UPDATE plan_mensual SET ingreso=?,moneda=?,pct_esencial=?,pct_ocio=?,pct_ahorro=?
+                  WHERE mes=?""", vals + (mes,))
+        else:
+            ex("""INSERT INTO plan_mensual(ingreso,moneda,pct_esencial,pct_ocio,pct_ahorro,mes)
+                  VALUES(?,?,?,?,?,?)""", vals + (mes,))
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/categorias/grupo", methods=["POST"])
+def set_grupo():
+    d = request.json
+    grupo = d.get("grupo")
+    if grupo not in GRUPOS:
+        return jsonify({"ok": False, "error": f"Grupo inválido: {grupo}"}), 400
+    try:
+        ex("UPDATE categorias SET grupo=? WHERE id=?", (grupo, d["id"]))
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/api/categorias")
 def categorias(): return jsonify(q("SELECT * FROM categorias ORDER BY nombre"))
 
@@ -665,6 +761,9 @@ def add_cat():
 
         ex("INSERT INTO categorias(nombre,limite_mensual,tipo,moneda) VALUES(?,?,?,?)",
            (nombre, limite, tipo, moneda))
+        if _tiene_columna("categorias", "grupo"):
+            grupo = d.get("grupo") if d.get("grupo") in GRUPOS else ("ahorro" if tipo == "ahorro" else "esencial")
+            ex("UPDATE categorias SET grupo=? WHERE LOWER(nombre)=LOWER(?)", (grupo, nombre))
         nueva = q("SELECT id FROM categorias WHERE LOWER(nombre)=LOWER(?)", (nombre,))
         return jsonify({"ok": True, "id": nueva[0]["id"] if nueva else None})
     except Exception as e:
@@ -1184,6 +1283,7 @@ input[type="date"]::-webkit-calendar-picker-indicator{opacity:.55;cursor:pointer
   .form-row .f-group input,.form-row .f-group select{width:100%;min-width:0}
   .form-row .btn{flex:1 1 100%;padding:12px}
   input,select{font-size:16px!important}
+  .grupo-sel{font-size:11px!important;max-width:104px}
   .hero{padding:22px 20px;border-radius:16px}
   .modal{padding:24px;border-radius:18px}
   th,td{padding:8px 10px}
@@ -1282,6 +1382,32 @@ input[type="date"]::-webkit-calendar-picker-indicator{opacity:.55;cursor:pointer
       🗑 Empezar mes de cero
     </button>
   </div>
+  <!-- ── REGLA 50/30/20 ── -->
+  <div class="box" style="margin-bottom:14px">
+    <div class="box-title">Reparto del mes — <span id="plan-mes-label"></span></div>
+    <div class="form-row" style="align-items:flex-end">
+      <div class="f-group"><label>Ingreso del mes</label>
+        <input id="pl-ingreso" type="text" inputmode="decimal" data-money placeholder="3.500"></div>
+      <div class="f-group"><label>Moneda</label>
+        <select id="pl-moneda">
+          <option value="USD">USD $</option>
+          <option value="COP">COP $</option>
+          <option value="PYG">PYG ₲</option>
+          <option value="EUR">EUR €</option>
+          <option value="ARS">ARS $</option>
+        </select></div>
+      <div class="f-group" style="max-width:96px"><label>% Esencial</label>
+        <input id="pl-esencial" type="text" inputmode="decimal" value="50"></div>
+      <div class="f-group" style="max-width:96px"><label>% Ocio</label>
+        <input id="pl-ocio" type="text" inputmode="decimal" value="30"></div>
+      <div class="f-group" style="max-width:96px"><label>% Ahorro</label>
+        <input id="pl-ahorro" type="text" inputmode="decimal" value="20"></div>
+      <button class="btn btn-primary" onclick="guardarPlan()">Guardar</button>
+    </div>
+    <div id="plan-aviso" style="font-size:11px;color:var(--text3);margin:-2px 0 10px"></div>
+    <div id="plan-grupos"></div>
+  </div>
+
   <div class="quick-add">
     <select id="qa-cat" style="flex:1.5"></select>
     <select id="qa-cuenta" style="flex:1.2"></select>
@@ -1893,6 +2019,115 @@ async function addInv(){
 // ── BUDGET ────────────────────────────────────────────────────────────────────
 const MONEDA_SYM = {USD:'$',COP:'$',PYG:'₲',EUR:'€',ARS:'$'};
 const MONEDA_CLS = {USD:'usd',COP:'cop',PYG:'pyg',EUR:'eur'};
+/* ── REGLA 50/30/20 ───────────────────────────────────────────────────────
+   Cada categoría cae en un grupo. Los porcentajes son una META, no un
+   corsé: si los esenciales se te comen el 65%, la app te lo marca en rojo
+   y decides tú si recortas o si cambias la meta. No se ajusta sola, porque
+   una meta que se mueve para darte la razón deja de ser una meta.        */
+const GRUPOS = [
+  {k:'esencial', nombre:'Esencial', icono:'🏠', color:'var(--blue)'},
+  {k:'ocio',     nombre:'Ocio',     icono:'🎉', color:'var(--amber)'},
+  {k:'ahorro',   nombre:'Ahorro',   icono:'💰', color:'var(--green)'},
+];
+const grupoDe = c => GRUPOS.some(g=>g.k===c.grupo) ? c.grupo : (c.tipo==='ahorro' ? 'ahorro' : 'esencial');
+let PLAN = null;
+
+async function setGrupo(id, grupo){
+  const r = await fetch('/api/categorias/grupo',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id,grupo})});
+  const j = await r.json().catch(()=>({}));
+  if(!r.ok||!j.ok){alert('No se pudo cambiar el grupo: '+(j.error||r.status));return;}
+  loadBudget();
+}
+
+async function guardarPlan(){
+  const pct = id => {const v=parseMoney($(id).value); return isNaN(v)?0:v;};
+  const d = {
+    mes: MES,
+    ingreso: parseMoney($('pl-ingreso').value)||0,
+    moneda: $('pl-moneda').value,
+    pct_esencial: pct('pl-esencial'), pct_ocio: pct('pl-ocio'), pct_ahorro: pct('pl-ahorro')
+  };
+  const r = await fetch('/api/plan/guardar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});
+  const j = await r.json().catch(()=>({}));
+  if(!r.ok||!j.ok){alert('No se pudo guardar el plan: '+(j.error||r.status));return;}
+  loadBudget();
+}
+
+/** Pinta las barras por grupo: objetivo vs lo que llevas de verdad. */
+function pintarGrupos(cats){
+  if(!PLAN){$('plan-grupos').innerHTML='';return;}
+  const mon = PLAN.moneda || 'USD';
+  const ingreso = Number(PLAN.ingreso)||0;
+  const pcts = {esencial:Number(PLAN.pct_esencial)||0, ocio:Number(PLAN.pct_ocio)||0, ahorro:Number(PLAN.pct_ahorro)||0};
+
+  const suma = pcts.esencial+pcts.ocio+pcts.ahorro;
+  $('plan-aviso').innerHTML = Math.abs(suma-100) > 0.5
+    ? `<span style="color:var(--amber)">Tus porcentajes suman ${suma.toFixed(0)}%, no 100%. Ajústalos para que el reparto cuadre.</span>`
+    : 'Solo cuentan las categorías en '+mon+'. Cambia el grupo de cada categoría con el desplegable de la derecha.';
+
+  if(!ingreso){
+    $('plan-grupos').innerHTML = '<p style="color:var(--text3);font-size:13px">Escribe tu ingreso del mes para ver el reparto.</p>';
+    return;
+  }
+
+  // Solo la moneda del plan: mezclar dólares con guaraníes daría un total falso
+  const real = {esencial:0, ocio:0, ahorro:0};
+  for(const c of cats){
+    if((c.moneda||'USD') !== mon) continue;
+    if(c.tipo === 'ingreso') continue;
+    real[grupoDe(c)] += Number(c.gastado)||0;
+  }
+
+  const usado = real.esencial + real.ocio + real.ahorro;
+  const sinAsignar = ingreso - usado;
+
+  $('plan-grupos').innerHTML = GRUPOS.map(g=>{
+    const meta = ingreso * pcts[g.k] / 100;
+    const llevas = real[g.k];
+    const pctReal = ingreso > 0 ? (llevas/ingreso*100) : 0;
+    const ancho = Math.min(100, meta>0 ? (llevas/meta*100) : 0);
+    // El ahorro al revés: quedarse corto es lo malo, pasarse es bueno
+    const mal = g.k==='ahorro' ? llevas < meta : llevas > meta;
+    const dif = llevas - meta;
+    // Redondeamos antes de comparar: si no, un céntimo de resto imprime "$-0"
+    const redondo = Math.round(dif);
+    const nota = redondo === 0
+      ? 'Justo en la meta'
+      : g.k==='ahorro'
+        ? (redondo > 0 ? `Vas ${fmtM(redondo,mon)} por encima de la meta` : `Te faltan ${fmtM(-redondo,mon)} para tu meta de ahorro`)
+        : (redondo < 0 ? `Te quedan ${fmtM(-redondo,mon)}` : `Te pasaste ${fmtM(redondo,mon)}`);
+    return `<div style="margin-bottom:12px">
+      <div class="budget-meta">
+        <span class="budget-name">${g.icono} ${g.nombre}
+          <span style="color:var(--text3);font-size:11px">meta ${pcts[g.k].toFixed(0)}%</span></span>
+        <span class="budget-amounts">
+          <b style="color:${mal?'var(--red)':g.color}">${fmtM(llevas,mon)}</b>
+          <span style="color:var(--text3)"> / ${fmtM(meta,mon)}</span>
+          <span style="color:var(--text3);font-size:10px"> · ${pctReal.toFixed(0)}% real</span>
+        </span>
+      </div>
+      <div class="bar-track"><div class="bar-fill" style="width:${ancho}%;background:${mal?'var(--red)':g.color}"></div></div>
+      <div style="font-size:11px;color:${mal?'var(--red)':'var(--text3)'};margin-top:3px;text-align:right">${nota}</div>
+    </div>`;
+  }).join('') + `
+    <div style="border-top:2px solid var(--border);margin-top:10px;padding-top:10px">
+      <div class="budget-meta">
+        <span class="budget-name" style="font-weight:700">Sin asignar</span>
+        <span class="budget-amounts" style="font-weight:700;color:${sinAsignar<0?'var(--red)':'var(--text)'}">
+          ${fmtM(sinAsignar,mon)} de ${fmtM(ingreso,mon)}
+        </span>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:3px;text-align:right">
+        ${Math.round(sinAsignar) < 0
+          ? 'Gastaste más de lo que entró este mes.'
+          : Math.round(sinAsignar) === 0
+            ? 'Repartiste todo el ingreso del mes.'
+            : 'Plata del mes que todavía no repartiste.'}
+      </div>
+    </div>`;
+}
+
 function fmtM(n,mon){
   const sym = MONEDA_SYM[mon] || '';
   // Guaraníes y pesos se escriben con punto de miles; dólares con coma
@@ -2009,11 +2244,24 @@ async function eliminarDeposito(id){
 }
 
 async function loadBudget(){
-  const [cats,rec,cash]=await Promise.all([
+  const [cats,rec,cash,plan]=await Promise.all([
     fetch('/api/budget/mes?mes='+MES).then(r=>r.json()),
     fetch('/api/budget/recientes?mes='+MES).then(r=>r.json()),
     fetch('/api/budget/cash?mes='+MES).then(r=>r.json()),
+    fetch('/api/plan?mes='+MES).then(r=>r.json()).catch(()=>null),
   ]);
+
+  // ── Reparto 50/30/20 del mes ──
+  PLAN = plan;
+  if(PLAN){
+    $('plan-mes-label').textContent = MES;
+    $('pl-ingreso').value = PLAN.ingreso ? fmtInput(PLAN.ingreso) : '';
+    $('pl-moneda').value  = PLAN.moneda || 'USD';
+    $('pl-esencial').value = PLAN.pct_esencial ?? 50;
+    $('pl-ocio').value     = PLAN.pct_ocio ?? 30;
+    $('pl-ahorro').value   = PLAN.pct_ahorro ?? 20;
+  }
+  pintarGrupos(cats);
 
   // Cash panel — disponible = saldo_ahorros + ingresos_mes - gastos_mes
   $('budget-cash').innerHTML = cash.length ? cash.map(c=>{
@@ -2075,6 +2323,9 @@ async function loadBudget(){
         <span class="budget-name">${c.nombre}${c.tipo==='ahorro'?' <span style="font-size:10px;font-weight:600;color:var(--green);border:1px solid var(--green);border-radius:6px;padding:1px 5px;vertical-align:middle">AHORRO</span>':''}</span>
         <span class="budget-amounts">${fmtC(c.gastado,c)}${lim?' / '+fmtC(lim,c):''} <span style="color:var(--text3);font-size:10px">${c.moneda||'USD'}</span></span>
         <span class="budget-actions">
+          <select class="grupo-sel" title="Grupo del 50/30/20" onchange="setGrupo(${c.id},this.value)">
+            ${GRUPOS.map(g=>`<option value="${g.k}" ${grupoDe(c)===g.k?'selected':''}>${g.icono} ${g.nombre}</option>`).join('')}
+          </select>
           <button class="budget-action-btn" title="Editar" onclick="toggleEditCat(${c.id})">✏️</button>
           <button class="budget-action-btn" title="Quitar de este mes en adelante" onclick="archivarCat(${c.id},'${c.nombre.replace(/'/g,"\\'")}')">📦</button>
           <button class="budget-action-btn del" title="Eliminar definitivamente" onclick="deleteCat(${c.id},'${c.nombre.replace(/'/g,"\\'")}')">🗑</button>
@@ -2783,7 +3034,7 @@ MANIFEST = {
     ],
 }
 
-SW_JS = """const CACHE='cfo-v21';
+SW_JS = """const CACHE='cfo-v22';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{
