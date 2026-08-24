@@ -1558,6 +1558,14 @@ input[type="date"]::-webkit-calendar-picker-indicator{opacity:.55;cursor:pointer
 
 <!-- ── AJUSTES ── -->
 <div class="tab" id="tab-config">
+  <div class="box" style="margin-bottom:24px;display:flex;justify-content:space-between;align-items:center;gap:12px">
+    <div>
+      <div style="font-size:13px;font-weight:600">Versión 25</div>
+      <div style="font-size:11px;color:var(--text3)">Si algo nuevo no te aparece, es que estás viendo una copia guardada.</div>
+    </div>
+    <button class="btn btn-outline btn-sm" onclick="forzarActualizar()">↻ Traer la última</button>
+  </div>
+
   <div class="section-title">Categorías retiradas</div>
   <div class="box" style="margin-bottom:24px">
     <div id="cats-archivadas"></div>
@@ -2235,6 +2243,22 @@ function fmtM(n,mon){
   // '$' lo comparten USD, COP y ARS: añadimos el código para no confundirlos.
   // '₲' y '€' son inequívocos, así que van solos.
   return (sym === '$' && mon !== 'USD') ? `${txt} ${mon}` : txt;
+}
+
+/** Tira la caché del service worker y recarga desde el servidor. */
+async function forzarActualizar(){
+  try{
+    if('serviceWorker' in navigator){
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r=>r.unregister()));
+    }
+    if(window.caches){
+      const ks = await caches.keys();
+      await Promise.all(ks.map(k=>caches.delete(k)));
+    }
+  }catch(e){}
+  sessionStorage.removeItem('recargado');
+  location.replace(location.pathname + '?v=' + Date.now());
 }
 
 async function limpiarMes(){
@@ -3109,7 +3133,22 @@ async function updPrecio(){
 pintarMes();
 loadHome();
 loadBudget();
-if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js").catch(()=>{});}
+if("serviceWorker" in navigator){
+  navigator.serviceWorker.register("/sw.js").then(reg=>{
+    reg.update();  // busca version nueva en cada arranque
+    // Si entra una version nueva mientras usas la app, recarga sola una vez
+    reg.addEventListener('updatefound',()=>{
+      const nuevo = reg.installing;
+      if(!nuevo) return;
+      nuevo.addEventListener('statechange',()=>{
+        if(nuevo.state==='activated' && !sessionStorage.getItem('recargado')){
+          sessionStorage.setItem('recargado','1');
+          location.reload();
+        }
+      });
+    });
+  }).catch(()=>{});
+}
 </script>
 </body>
 </html>"""
@@ -3134,7 +3173,7 @@ MANIFEST = {
     ],
 }
 
-SW_JS = """const CACHE='cfo-v24';
+SW_JS = """const CACHE='cfo-v25';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{
@@ -3151,11 +3190,27 @@ def manifest():
 
 @app.route("/sw.js")
 def service_worker():
-    return app.response_class(SW_JS, mimetype="application/javascript")
+    r = app.response_class(SW_JS, mimetype="application/javascript")
+    # Sin esto el navegador puede cachear el propio service worker y no
+    # enterarse nunca de que hay una version nueva.
+    r.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return r
 
 
 @app.route("/")
-def dashboard(): return render_template_string(DASH)
+def dashboard():
+    """
+    La app entera (HTML + CSS + JS) se sirve desde aqui, asi que si esta
+    respuesta se cachea te quedas con la version vieja aunque el servidor ya
+    tenga la nueva. Sin cabeceras, Vercel y el navegador cachean por su
+    cuenta: por eso hay que decirlo explicitamente.
+    """
+    r = app.response_class(render_template_string(DASH), mimetype="text/html")
+    r.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    r.headers["CDN-Cache-Control"] = "no-store"
+    r.headers["Vercel-CDN-Cache-Control"] = "no-store"
+    r.headers["Pragma"] = "no-cache"
+    return r
 
 if __name__ == "__main__":
     print("CFO Personal v2 — http://localhost:3100")
