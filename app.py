@@ -332,6 +332,18 @@ def precios_live():
     else:
         errors.append("BTC")
 
+    # ETH price (CoinGecko) — ether.fi es staking de ETH: si no se actualiza,
+    # el patrimonio se queda congelado al precio del día que lo metiste.
+    cg_eth = fetch("https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd")
+    if cg_eth and "ethereum" in cg_eth:
+        eth = float(cg_eth["ethereum"]["usd"])
+        result["ETH"] = eth
+        for simbolo in ("ETH", "EETH", "WEETH"):  # eETH y weETH siguen al ETH
+            ex("INSERT INTO precios_mercado(activo,precio_usd,actualizado_en) VALUES(?,?,?) ON CONFLICT(activo) DO UPDATE SET precio_usd=excluded.precio_usd,actualizado_en=excluded.actualizado_en",
+               (simbolo, eth, now))
+    else:
+        errors.append("ETH")
+
     # MSTR price (Yahoo Finance)
     yf = fetch("https://query1.finance.yahoo.com/v8/finance/chart/MSTR?interval=1d&range=1d")
     if yf:
@@ -1532,14 +1544,7 @@ input[type="date"]::-webkit-calendar-picker-indicator{opacity:.55;cursor:pointer
         <div class="f-group"><label>Moneda</label>
           <select id="a-moneda"><option value="USD">USD</option><option value="COP">COP</option><option value="PYG">PYG ₲</option></select></div>
         <div class="f-group"><label>Tipo de cuenta</label>
-          <select id="a-cuenta">
-            <option value="GrabFi">GrabFi</option>
-            <option value="Listo Global">Listo Global</option>
-            <option value="Cuenta Paraguay">Cuenta Paraguay</option>
-            <option value="Binance">Binance</option>
-            <option value="Efectivo">Efectivo</option>
-            <option value="Otro">Otro</option>
-          </select></div>
+          <select id="a-cuenta"></select></div>
         <button class="btn btn-primary" onclick="addAhorro()">+ Agregar</button>
       </div>
     </div>
@@ -1569,7 +1574,7 @@ input[type="date"]::-webkit-calendar-picker-indicator{opacity:.55;cursor:pointer
 <div class="tab" id="tab-config">
   <div class="box" style="margin-bottom:24px;display:flex;justify-content:space-between;align-items:center;gap:12px">
     <div>
-      <div style="font-size:13px;font-weight:600">Versión 26</div>
+      <div style="font-size:13px;font-weight:600">Versión 27</div>
       <div style="font-size:11px;color:var(--text3)">Si algo nuevo no te aparece, es que estás viendo una copia guardada.</div>
     </div>
     <button class="btn btn-outline btn-sm" onclick="forzarActualizar()">↻ Traer la última</button>
@@ -2247,6 +2252,18 @@ function pintarGrupos(cats){
     </div>`;
 }
 
+/* Sitios donde tienes dinero. Estaba repetido en cuatro <select> distintos:
+   añadir una cuenta obligaba a tocar los cuatro y era cuestión de tiempo que
+   uno se quedara atrás. Ahora se pintan todos desde aquí. */
+const CUENTAS = ['GrabFi','Listo Global','Cuenta Paraguay','Binance','ether.fi','Efectivo','Otro'];
+
+/** <option> de todas las cuentas, marcando la que ya estuviera elegida. */
+function opcionesCuenta(sel, incluirOtro=true){
+  return CUENTAS
+    .filter(c => incluirOtro || c !== 'Otro')
+    .map(c => `<option value="${c}" ${c===sel?'selected':''}>${c}</option>`).join('');
+}
+
 function fmtM(n,mon){
   const sym = MONEDA_SYM[mon] || '';
   // Guaraníes y pesos se escriben con punto de miles; dólares con coma
@@ -2721,6 +2738,7 @@ async function reactivarCat(id){
 }
 
 async function loadAhorros(){
+  $('a-cuenta').innerHTML = opcionesCuenta('GrabFi');
   const [ah,mt,cashData,cfg]=await Promise.all([
     fetch('/api/ahorros').then(r=>r.json()),
     fetch('/api/metas').then(r=>r.json()),
@@ -2934,11 +2952,7 @@ function renderMeta(m){
         <input id="dep-m-${m.id}" type="text" inputmode="decimal" data-money placeholder="500"
           style="width:85px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;font-family:inherit">
         <select id="dep-c-${m.id}" style="background:var(--bg);border:1.5px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;font-family:inherit">
-          <option value="GrabFi">GrabFi</option>
-          <option value="Listo Global">Listo Global</option>
-          <option value="Cuenta Paraguay">Cuenta Paraguay</option>
-          <option value="Binance">Binance</option>
-          <option value="Efectivo">Efectivo</option>
+          ${opcionesCuenta(null, false)}
         </select>
         <input id="dep-n-${m.id}" placeholder="Descripción (opcional)"
           style="flex:1;min-width:110px;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;font-family:inherit">
@@ -3004,12 +3018,7 @@ function editAhorro(id,desc,monto,moneda,cuenta){
         <option value="PYG" ${moneda==='PYG'?'selected':''}>PYG ₲</option>
       </select>
       <select id="ea-c-${id}" style="background:var(--bg);border:1.5px solid var(--border);border-radius:8px;padding:6px 8px;font-size:13px;font-family:inherit">
-        <option value="GrabFi" ${cuenta==='GrabFi'?'selected':''}>GrabFi</option>
-        <option value="Listo Global" ${cuenta==='Listo Global'?'selected':''}>Listo Global</option>
-        <option value="Cuenta Paraguay" ${cuenta==='Cuenta Paraguay'?'selected':''}>Cuenta Paraguay</option>
-        <option value="Binance" ${cuenta==='Binance'?'selected':''}>Binance</option>
-        <option value="Efectivo" ${cuenta==='Efectivo'?'selected':''}>Efectivo</option>
-        <option value="Otro" ${cuenta==='Otro'?'selected':''}>Otro</option>
+        ${opcionesCuenta(cuenta)}
       </select>
     </div>
     <div style="display:flex;gap:8px">
@@ -3187,7 +3196,7 @@ MANIFEST = {
     ],
 }
 
-SW_JS = """const CACHE='cfo-v26';
+SW_JS = """const CACHE='cfo-v27';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{
