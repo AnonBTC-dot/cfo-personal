@@ -332,18 +332,6 @@ def precios_live():
     else:
         errors.append("BTC")
 
-    # ETH price (CoinGecko) — ether.fi es staking de ETH: si no se actualiza,
-    # el patrimonio se queda congelado al precio del día que lo metiste.
-    cg_eth = fetch("https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd")
-    if cg_eth and "ethereum" in cg_eth:
-        eth = float(cg_eth["ethereum"]["usd"])
-        result["ETH"] = eth
-        for simbolo in ("ETH", "EETH", "WEETH"):  # eETH y weETH siguen al ETH
-            ex("INSERT INTO precios_mercado(activo,precio_usd,actualizado_en) VALUES(?,?,?) ON CONFLICT(activo) DO UPDATE SET precio_usd=excluded.precio_usd,actualizado_en=excluded.actualizado_en",
-               (simbolo, eth, now))
-    else:
-        errors.append("ETH")
-
     # MSTR price (Yahoo Finance)
     yf = fetch("https://query1.finance.yahoo.com/v8/finance/chart/MSTR?interval=1d&range=1d")
     if yf:
@@ -1574,7 +1562,7 @@ input[type="date"]::-webkit-calendar-picker-indicator{opacity:.55;cursor:pointer
 <div class="tab" id="tab-config">
   <div class="box" style="margin-bottom:24px;display:flex;justify-content:space-between;align-items:center;gap:12px">
     <div>
-      <div style="font-size:13px;font-weight:600">Versión 27</div>
+      <div style="font-size:13px;font-weight:600">Versión 28</div>
       <div style="font-size:11px;color:var(--text3)">Si algo nuevo no te aparece, es que estás viendo una copia guardada.</div>
     </div>
     <button class="btn btn-outline btn-sm" onclick="forzarActualizar()">↻ Traer la última</button>
@@ -3196,7 +3184,7 @@ MANIFEST = {
     ],
 }
 
-SW_JS = """const CACHE='cfo-v27';
+SW_JS = """const CACHE='cfo-v28';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{
